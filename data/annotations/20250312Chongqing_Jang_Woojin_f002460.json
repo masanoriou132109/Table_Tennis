@@ -1,0 +1,35 @@
+{
+  "image": "20250312Chongqing_Jang_Woojin_f002460.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      454.0,
+      346.0
+    ],
+    "far_right": [
+      827.0,
+      346.3
+    ],
+    "near_right": [
+      850.0,
+      452.0
+    ],
+    "near_left": [
+      427.7,
+      451.5
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

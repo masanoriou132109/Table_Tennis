@@ -1,0 +1,35 @@
+{
+  "image": "10_20241105_法蘭克福冠軍賽_第1局_林昀儒_7_Alexis_Leb_f00120.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      453.7,
+      336.1
+    ],
+    "far_right": [
+      823.6,
+      337.7
+    ],
+    "near_right": [
+      852.1,
+      435.0
+    ],
+    "near_left": [
+      426.3,
+      434.5
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

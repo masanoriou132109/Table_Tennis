@@ -1,0 +1,42 @@
+# 影片 (版權轉播素材,勿上傳)
+videos/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# 衍生資料 (影格由影片抽出,可重建;體積大)
+data/frames/
+data/frames_pool/
+data/labelme/
+data/labelme_pool/
+data/viz/
+data/viz_*/
+data/infer_*/
+data/infer_sample/
+
+# 模型權重 (二進位,大;可由訓練重建)
+checkpoints/
+*.pt
+*.pth
+*.mlmodel
+*.mlpackage
+
+# Python
+.venv/
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 系統
+.DS_Store
+
+# Xcode 使用者狀態 (保留 .xcodeproj 本體)
+xcuserdata/
+*.xcuserstate
+
+# 保留: 標註成果與切分 (小而有價值)
+!data/annotations/
+!data/splits/

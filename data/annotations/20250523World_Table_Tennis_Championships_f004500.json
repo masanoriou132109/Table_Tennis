@@ -1,0 +1,35 @@
+{
+  "image": "20250523World_Table_Tennis_Championships_f004500.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      507.0,
+      352.0
+    ],
+    "far_right": [
+      815.7,
+      340.3
+    ],
+    "near_right": [
+      854.6,
+      465.1
+    ],
+    "near_left": [
+      478.0,
+      475.0
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

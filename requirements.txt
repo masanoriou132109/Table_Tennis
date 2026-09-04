@@ -1,0 +1,4 @@
+opencv-python>=4.9
+numpy>=1.26
+ultralytics>=8.3   # 提供 SAM2 推論 (自動下載權重)
+torch>=2.2         # ultralytics 依賴; Mac 上會用 MPS

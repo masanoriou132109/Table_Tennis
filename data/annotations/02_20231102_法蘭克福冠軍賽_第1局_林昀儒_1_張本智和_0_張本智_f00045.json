@@ -1,0 +1,35 @@
+{
+  "image": "02_20231102_法蘭克福冠軍賽_第1局_林昀儒_1_張本智和_0_張本智_f00045.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      486.1,
+      415.7
+    ],
+    "far_right": [
+      789.3,
+      415.4
+    ],
+    "near_right": [
+      808.6,
+      491.4
+    ],
+    "near_left": [
+      464.3,
+      488.7
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": false,
+    "near_left": true
+  }
+}

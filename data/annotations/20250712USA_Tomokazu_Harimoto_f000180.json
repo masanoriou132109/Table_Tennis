@@ -1,0 +1,35 @@
+{
+  "image": "20250712USA_Tomokazu_Harimoto_f000180.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      452.9,
+      421.8
+    ],
+    "far_right": [
+      833.1,
+      425.1
+    ],
+    "near_right": [
+      856.5,
+      558.2
+    ],
+    "near_left": [
+      424.1,
+      552.2
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

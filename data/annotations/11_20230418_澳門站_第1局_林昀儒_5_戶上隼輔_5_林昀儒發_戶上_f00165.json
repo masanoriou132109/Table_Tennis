@@ -1,0 +1,35 @@
+{
+  "image": "11_20230418_澳門站_第1局_林昀儒_5_戶上隼輔_5_林昀儒發_戶上_f00165.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      483.8,
+      349.2
+    ],
+    "far_right": [
+      813.0,
+      350.5
+    ],
+    "near_right": [
+      843.5,
+      435.9
+    ],
+    "near_left": [
+      457.3,
+      435.4
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

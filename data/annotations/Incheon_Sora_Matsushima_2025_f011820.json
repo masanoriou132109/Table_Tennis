@@ -1,0 +1,35 @@
+{
+  "image": "Incheon_Sora_Matsushima_2025_f011820.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      464.2,
+      339.3
+    ],
+    "far_right": [
+      818.1,
+      341.0
+    ],
+    "near_right": [
+      842.0,
+      446.0
+    ],
+    "near_left": [
+      438.3,
+      443.3
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": false,
+    "near_right": true,
+    "near_left": true
+  }
+}
