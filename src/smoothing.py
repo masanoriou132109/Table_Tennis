@@ -2,12 +2,16 @@
 
 策略:
   - presence 低於門檻 → 視為畫面無桌面,重置狀態。
-  - 高信心角: 用 EMA 平滑,消除逐格抖動。
-  - 低信心角 (被球員遮擋/出畫面): 不信模型的亂猜。改用「上一狀態 → 本格高信心角」
-    估計的相似變換 (旋轉+縮放+平移),把上一格該角的位置搬到本格,讓被擋的角
-    跟著相機 zoom/pan 移動。至少要 2 個高信心角才能估變換,否則沿用上一位置。
+  - 高信心角: 用 EMA 平滑,消除逐格抖動。角一恢復可見就拉回模型預測,不長期漂移。
+  - 低信心角 (被球員遮擋/出畫面): 不信模型的亂猜。用「上一狀態的可見角 → 本格可見角」
+    估計的平面變換,把上一格該角的位置搬到本格,讓被擋的角跟著相機 zoom/pan 移動。
+    依可見角數量選變換: 3 角→完整仿射 (6 DOF, 含剪切), 2 角→相似 (4 DOF), <2→沿用。
+    再依相機運動量在「沿用」與「變換」間混合 (hybrid): 相機靜止時偏沿用 (避免變換把
+    可見角抖動經槓桿放大到遠處被擋角),運鏡時偏變換 (追隨相機,避免長遮擋凍結漂移)。
 
-只用 numpy + cv2,無狀態外部依賴。
+只用 numpy + cv2,場地無關 (只吃角點座標,不吃顏色),可隨模型一起部署。
+合成遮擋測試 (見 scripts/eval_occlusion_fill.py): hybrid 在靜止/運鏡兩情境皆穩健,
+優於純相似 (最差) 與純沿用 (運鏡時長遮擋會漂)。
 """
 
 from __future__ import annotations
@@ -18,10 +22,11 @@ import numpy as np
 
 class CornerSmoother:
     def __init__(self, alpha: float = 0.5, score_thresh: float = 0.35,
-                 presence_thresh: float = 0.5):
+                 presence_thresh: float = 0.5, motion_ref: float = 3.0):
         self.alpha = alpha
         self.score_thresh = score_thresh
         self.presence_thresh = presence_thresh
+        self.motion_ref = motion_ref  # px: 可見角平均位移達此值即完全採用變換
         self.state: np.ndarray | None = None  # (4,2) 平滑後座標
         # 記錄每個角「有信心」的旗標 (回傳供上色/除錯)
         self.confident = np.zeros(4, bool)
@@ -52,16 +57,25 @@ class CornerSmoother:
             if conf[i]:
                 new[i] = (1 - self.alpha) * prev[i] + self.alpha * coords[i]
 
-        # 低信心角: 用高信心角的相似變換從 prev 推算
+        # 低信心角: 用可見角估平面變換,依相機運動量在「沿用」與「變換」間混合
         occ = np.where(~conf)[0]
-        if len(occ) > 0 and conf.sum() >= 2:
+        n_conf = int(conf.sum())
+        if len(occ) > 0 and n_conf >= 2:
             src = prev[conf].astype(np.float32)
             dst = new[conf].astype(np.float32)
-            M, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
-            if M is not None:
-                for i in occ:
-                    p = M @ np.array([prev[i][0], prev[i][1], 1.0])
-                    new[i] = p
+            if n_conf >= 3:  # 完整仿射 (6 DOF): 平移+旋轉+縮放+剪切
+                M, _ = cv2.estimateAffine2D(src, dst, method=cv2.LMEDS)
+            else:            # 相似 (4 DOF): 平移+旋轉+等比縮放
+                M, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
+            motion = float(np.linalg.norm(dst - src, axis=1).mean())
+            w = min(motion / self.motion_ref, 1.0)  # 靜止→沿用, 運鏡→變換
+            for i in occ:
+                hold = prev[i]
+                if M is not None:
+                    warped = M @ np.array([prev[i][0], prev[i][1], 1.0])
+                    new[i] = (1 - w) * hold + w * warped
+                else:
+                    new[i] = hold
         # (conf<2 時 occ 角沿用 prev 位置,即 new 保持不變)
 
         self.state = new
