@@ -26,9 +26,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dataset import IMAGENET_MEAN, IMAGENET_STD, INPUT_H, INPUT_W  # noqa: E402
-from src.geometry import is_plausible_quad  # noqa: E402
 from src.model import TableKeypointNet, decode_heatmaps  # noqa: E402
-from src.smoothing import CornerSmoother  # noqa: E402
+from src.tracker import TableTracker  # noqa: E402
 
 CORNER_COLORS = [(0, 255, 255), (0, 165, 255), (255, 0, 255), (255, 255, 0)]
 
@@ -107,28 +106,25 @@ def main() -> None:
         writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         start_f = int(args.start * fps)
         end_f = min(total, int((args.start + args.dur) * fps))
-        smoother = CornerSmoother(score_thresh=args.score_thresh) if args.smooth else None
+        tracker = TableTracker(w, h, score_thresh=args.score_thresh) if args.smooth else None
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
         for _ in range(end_f - start_f):
             ok, frame = cap.read()
             if not ok:
                 break
             coords, scores, presence = predict(model, frame, device, w, h)
-            if smoother is not None:
-                sm = smoother.update(coords, scores, presence)
-                if sm is not None:
-                    coords = sm
-                    # 平滑後被補算的遮擋角: 分數壓到門檻下,畫成紅點提示
-                    scores = np.where(smoother.confident, scores, 0.0)
-            # 幾何合理性閘門: 側拍/誤偵的不合理四邊形不繪製
-            if presence > 0.5 and not is_plausible_quad(coords, w, h):
-                presence = 0.0
-                if smoother is not None:
-                    smoother.reset()
+            if tracker is not None:
+                quad = tracker.update(coords, scores, presence)
+                if quad is not None:  # 通過三重閘門且已確認
+                    coords = quad
+                    scores = np.where(tracker.smoother.confident, scores, 0.0)  # 補算角畫紅點
+                    presence = 1.0
+                else:
+                    presence = 0.0  # 未確認/被閘門擋下 → 不繪製
             draw(frame, coords, scores, presence, args.score_thresh)
             writer.write(frame)
         writer.release()
-        print(f"疊框影片輸出於 {out_path}  (smooth={'on' if smoother else 'off'})")
+        print(f"疊框影片輸出於 {out_path}  (smooth={'on' if tracker else 'off'})")
 
     cap.release()
 
