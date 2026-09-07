@@ -88,7 +88,10 @@ labelme data/frames --output data/labelme \
       補算 (3角→仿射/2角→相似,依運動量在沿用↔變換間混合)。取代原本全程最差的純相似。
 - [x] 影片級追蹤 `src/tracker.py` (TableTracker): 整合平滑 + 三重穩健性閘門
       (幾何 / 信心 / 時序確認),廣角·斜角·分布外鏡頭寧可不畫也不畫錯。
-- [ ] 後續 (視需求): 解碼向量化加速整場推論 / 部署 Core ML (iOS/macOS 即時)
+- [x] Homography 地基 `src/homography.py`: 每幀 4 角 + 已知桌面尺寸 (2.74×1.525m)
+      → 影像像素 ↔ 真實桌面座標。`infer_video.py --grid` 疊真實座標網格驗證。
+      落點分析地基: 反彈幀球影像座標 → `image_to_table` → 真實桌面落點。
+- [ ] 後續 (視需求): 球偵測/追蹤 (落點分析) / 解碼向量化 / 部署 Core ML (iOS/macOS 即時)
 
 ## 影片級穩健性 (TableTracker)
 
