@@ -21,10 +21,11 @@ import numpy as np
 
 class CornerSmoother:
     def __init__(self, alpha: float = 0.5, score_thresh: float = 0.35,
-                 presence_thresh: float = 0.5):
+                 presence_thresh: float = 0.5, motion_ref: float = 8.0):
         self.alpha = alpha
         self.score_thresh = score_thresh
         self.presence_thresh = presence_thresh
+        self.motion_ref = motion_ref  # px: 可見角相對先驗的位移達此值即完全採用仿射
         self.state: np.ndarray | None = None      # (4,2) 平滑後座標
         self.reference: np.ndarray | None = None   # (4,2) 最近一次 4 角全可信的完整四邊形
         self.confident = np.zeros(4, bool)         # 本格各角是否高信心 (供上色)
@@ -74,8 +75,17 @@ class CornerSmoother:
             if self.reference is not None and n_conf >= 2:
                 M = self._fill_affine(new[conf], conf)
                 if M is not None:
+                    # 相機相對先驗的運動量: 靜止→直接用先驗原位置 (避免3點仿射把可見角
+                    # 誤差完全傳到遠端被遮角), 運鏡→用仿射追隨
+                    motion = float(np.linalg.norm(
+                        new[conf] - self.reference[conf], axis=1).mean())
+                    w = min(motion / self.motion_ref, 1.0)
                     for i in np.where(occ)[0]:
-                        new[i] = M @ np.array([self.reference[i][0], self.reference[i][1], 1.0])
+                        warped = M @ np.array([self.reference[i][0], self.reference[i][1], 1.0])
+                        target = (1 - w) * self.reference[i] + w * warped
+                        # 補出的角也做 EMA (damp 單幀抖動)
+                        new[i] = (target if self.state is None
+                                  else (1 - self.alpha) * self.state[i] + self.alpha * target)
                     self.valid = True
                 elif self.state is not None:      # 仿射失敗 → 沿用上一位置
                     new[occ] = self.state[occ]
