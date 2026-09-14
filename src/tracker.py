@@ -60,26 +60,29 @@ class TableTracker:
             frame_ok = False
             smoothed = None
 
-        if frame_ok:
-            if self.last is None or \
-               float(np.linalg.norm(smoothed - self.last, axis=1).mean()) <= self.jump_thresh:
-                # 與既有追蹤一致 → 累積確認
-                self.hits += 1
-                self.misses = 0
-                self.last = smoothed
-            else:
-                # 大跳變 (場景切換) → 於新位置重啟 tentative 追蹤
-                self.hits = 1
-                self.misses = 0
-                self.last = smoothed
-                self.confirmed = False
-                self.smoother.reset()
-                self.smoother.update(coords, scores, presence)  # 以新框重新起始狀態
-        else:
+        if not frame_ok:
             self.misses += 1
             self.hits = 0
             if self.misses > self.max_misses:
                 self._reset_track()
+            self.confirmed = False
+            return None
 
+        # 建立期: 4 角尚未都被可信偵測過 → 只讓 smoother 累積 seen,不繪製、不啟動確認
+        if not self.smoother.all_seen:
+            self.hits = 0
+            self.misses = 0
+            self.last = None
+            self.confirmed = False
+            return None
+
+        # 全見過後才啟動確認狀態機
+        if self.last is None or \
+           float(np.linalg.norm(smoothed - self.last, axis=1).mean()) <= self.jump_thresh:
+            self.hits += 1            # 與既有追蹤一致 → 累積確認
+        else:
+            self.hits = 1             # 大跳變 (場景切換) → 於新位置重啟 tentative
+        self.misses = 0
+        self.last = smoothed
         self.confirmed = self.hits >= self.confirm_frames
         return self.last if self.confirmed else None

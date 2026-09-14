@@ -28,8 +28,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.model import TableKeypointNet  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 
-MODES = ("hold", "similarity", "affine", "hybrid")
+MODES = ("hold", "similarity", "affine", "hybrid", "parallelogram")
 MOTION_REF = 3.0  # px: 可見角平均位移達此值即完全採用 affine
+
+
+def parallelogram_fill(cur4, drop):
+    """用本格其餘 3 角平行四邊形補全 drop 角 (對角線互相平分, 無需歷史)。"""
+    return cur4[(drop + 1) % 4] + cur4[(drop - 1) % 4] - cur4[(drop + 2) % 4]
 
 
 def apply_transform(prev4, cur_visible_true, drop, mode):
@@ -40,6 +45,8 @@ def apply_transform(prev4, cur_visible_true, drop, mode):
     hold = prev4[drop].copy()
     if mode == "hold":
         return hold
+    if mode == "parallelogram":  # 幾何補全, 只用本格 3 可見角
+        return parallelogram_fill(cur_visible_true, drop)
     if mode == "similarity":
         M = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)[0]
     else:  # affine / hybrid 皆用完整仿射

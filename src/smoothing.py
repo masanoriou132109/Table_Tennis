@@ -30,10 +30,18 @@ class CornerSmoother:
         self.state: np.ndarray | None = None  # (4,2) 平滑後座標
         # 記錄每個角「有信心」的旗標 (回傳供上色/除錯)
         self.confident = np.zeros(4, bool)
+        # 每個角是否「曾被可信偵測過」: 未曾見過的角無法憑幾何補出 (透視), 不可信任
+        self.seen = np.zeros(4, bool)
 
     def reset(self) -> None:
         self.state = None
         self.confident = np.zeros(4, bool)
+        self.seen = np.zeros(4, bool)
+
+    @property
+    def all_seen(self) -> bool:
+        """4 角是否都至少被可信偵測過一次 (建立透視參考的前提)。"""
+        return bool(self.seen.all())
 
     def update(self, coords: np.ndarray, scores: np.ndarray,
                presence: float) -> np.ndarray | None:
@@ -45,17 +53,20 @@ class CornerSmoother:
         conf = scores >= self.score_thresh
         self.confident = conf
 
-        if self.state is None:  # 首格: 直接採用原始預測
+        if self.state is None:  # 首格: 建立佔位狀態 (未見過的角為垃圾, 靠 seen 標記)
             self.state = coords.astype(np.float64).copy()
+            self.seen = conf.copy()
             return self.state.copy()
 
         prev = self.state.copy()
         new = self.state.copy()
 
-        # 高信心角: EMA 平滑
+        # 高信心角: 首次可見 → 直接採用 (prev 為佔位垃圾, 不可 EMA); 已見過 → EMA 平滑
         for i in range(4):
             if conf[i]:
-                new[i] = (1 - self.alpha) * prev[i] + self.alpha * coords[i]
+                new[i] = coords[i] if not self.seen[i] else \
+                    (1 - self.alpha) * prev[i] + self.alpha * coords[i]
+        self.seen |= conf
 
         # 低信心角: 用可見角估平面變換,依相機運動量在「沿用」與「變換」間混合
         occ = np.where(~conf)[0]
