@@ -71,7 +71,7 @@ def main() -> None:
     parser.add_argument("--n", type=int, default=8, help="sample 模式抽幾幀")
     parser.add_argument("--start", type=float, default=0.0, help="video 模式起始秒")
     parser.add_argument("--dur", type=float, default=30.0, help="video 模式時長秒")
-    parser.add_argument("--score-thresh", type=float, default=0.35)
+    parser.add_argument("--score-thresh", type=float, default=0.5)
     parser.add_argument("--smooth", action="store_true", help="video 模式啟用時序平滑")
     parser.add_argument("--grid", action="store_true", help="疊真實桌面座標網格 (homography)")
     args = parser.parse_args()
