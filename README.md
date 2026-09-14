@@ -91,9 +91,10 @@ labelme data/frames --output data/labelme \
 - [x] Homography 地基 `src/homography.py`: 每幀 4 角 + 已知桌面尺寸 (2.74×1.525m)
       → 影像像素 ↔ 真實桌面座標。`infer_video.py --grid` 疊真實座標網格驗證。
       落點分析地基: 反彈幀球影像座標 → `image_to_table` → 真實桌面落點。
-- [x] 遮擋初始化修正: 角需「曾被可信偵測過一次」才信任 (`seen` 旗標)。開頭即被遮的角
-      無法憑單幀幾何補出 (透視下平行四邊形補全誤差 ~49px, 見 eval_occlusion_fill),故 4 角
-      未全建立前不繪製 (NO TABLE) 而非畫歪框;建立後再被遮才由 hybrid 補角。首次可見直接採用。
+- [x] 持久先驗補角: 主相機機位固定 → 桌角整場位置穩定 (std~10px)。每次 4 角全可信即記下
+      完整四邊形當先驗;被遮時用「先驗可見角→本格可見角」仿射對齊補出被遮角 (透視正確,
+      合成測試 ~5px,遠優於單幀平行四邊形 ~49px)。只要整場看過桌子一次,之後每個回合
+      開頭發球遮角也能立刻畫框 (滿足「一開始就有框」)。`src/smoothing.py` reference 機制。
 - [ ] 後續 (視需求): 球偵測/追蹤 (落點分析) / 解碼向量化 / 部署 Core ML (iOS/macOS 即時)
 
 ## 影片級穩健性 (TableTracker)

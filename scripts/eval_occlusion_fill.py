@@ -28,7 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.model import TableKeypointNet  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 
-MODES = ("hold", "similarity", "affine", "hybrid", "parallelogram")
+MODES = ("hold", "affine", "hybrid", "parallelogram", "reference")
 MOTION_REF = 3.0  # px: 可見角平均位移達此值即完全採用 affine
 
 
@@ -37,16 +37,22 @@ def parallelogram_fill(cur4, drop):
     return cur4[(drop + 1) % 4] + cur4[(drop - 1) % 4] - cur4[(drop + 2) % 4]
 
 
-def apply_transform(prev4, cur_visible_true, drop, mode):
-    """prev4: 上一重建狀態(4角); cur_visible_true: 本格可見角真值。"""
+def apply_transform(prev4, cur_visible_true, drop, mode, reference=None):
+    """prev4: 上一重建狀態(4角); cur_visible_true: 本格可見角真值;
+    reference: 固定先驗完整四邊形 (reference 模式用)。"""
     keep = [i for i in range(4) if i != drop]
-    src = prev4[keep].astype(np.float32)
     dst = cur_visible_true[keep].astype(np.float32)
     hold = prev4[drop].copy()
     if mode == "hold":
         return hold
     if mode == "parallelogram":  # 幾何補全, 只用本格 3 可見角
         return parallelogram_fill(cur_visible_true, drop)
+    if mode == "reference":  # 固定先驗 + 可見角仿射對齊 (透視正確)
+        M, _ = cv2.estimateAffine2D(reference[keep].astype(np.float32), dst, method=cv2.LMEDS)
+        if M is None:
+            return hold
+        return M @ np.array([reference[drop][0], reference[drop][1], 1.0])
+    src = prev4[keep].astype(np.float32)
     if mode == "similarity":
         M = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)[0]
     else:  # affine / hybrid 皆用完整仿射
@@ -99,13 +105,14 @@ def main() -> None:
         if any(b is None for b in block):  # 需整段皆可信
             continue
         block = [b for b in block]
+        reference = block[0].copy()  # 遮擋前最後一次完整偵測 = 固定先驗
         for drop in range(4):
             for mode in MODES:
                 state = block[0].copy()  # t=s 全真
                 for j in range(1, W + 1):
                     cur_true = block[j]
                     new = cur_true.copy()          # 3 可見角追隨真值
-                    new[drop] = apply_transform(state, cur_true, drop, mode)
+                    new[drop] = apply_transform(state, cur_true, drop, mode, reference)
                     err[mode][j - 1].append(float(np.linalg.norm(new[drop] - cur_true[drop])))
                     state = new
     n = len(err["hold"][0]) if err["hold"][0] else 0

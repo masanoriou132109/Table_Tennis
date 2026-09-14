@@ -55,6 +55,10 @@ class TableTracker:
         frame_ok = presence >= self.presence_thresh and n_conf >= self.min_conf_corners
 
         smoothed = self.smoother.update(coords, scores, presence) if frame_ok else None
+        # smoother.valid: 4 角全可信,或有先驗且可用可見角補出被遮角
+        if smoothed is not None and not self.smoother.valid:
+            frame_ok = False
+            smoothed = None
         # 閘門 3-幾何: 平滑後四邊形須合理
         if smoothed is not None and not is_plausible_quad(smoothed, self.img_w, self.img_h):
             frame_ok = False
@@ -68,15 +72,7 @@ class TableTracker:
             self.confirmed = False
             return None
 
-        # 建立期: 4 角尚未都被可信偵測過 → 只讓 smoother 累積 seen,不繪製、不啟動確認
-        if not self.smoother.all_seen:
-            self.hits = 0
-            self.misses = 0
-            self.last = None
-            self.confirmed = False
-            return None
-
-        # 全見過後才啟動確認狀態機
+        # 確認狀態機
         if self.last is None or \
            float(np.linalg.norm(smoothed - self.last, axis=1).mean()) <= self.jump_thresh:
             self.hits += 1            # 與既有追蹤一致 → 累積確認
