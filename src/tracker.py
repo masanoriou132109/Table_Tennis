@@ -23,7 +23,7 @@ from src.smoothing import CornerSmoother
 
 class TableTracker:
     def __init__(self, img_w: int, img_h: int, *,
-                 score_thresh: float = 0.5, presence_thresh: float = 0.5,
+                 score_thresh: float = 0.75, presence_thresh: float = 0.5,
                  min_conf_corners: int = 2, confirm_frames: int = 3,
                  max_misses: int = 5, jump_thresh: float = 100.0):
         self.img_w = img_w

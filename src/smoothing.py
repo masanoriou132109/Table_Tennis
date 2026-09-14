@@ -20,7 +20,7 @@ import numpy as np
 
 
 class CornerSmoother:
-    def __init__(self, alpha: float = 0.5, score_thresh: float = 0.5,
+    def __init__(self, alpha: float = 0.5, score_thresh: float = 0.75,
                  presence_thresh: float = 0.5, motion_ref: float = 8.0):
         self.alpha = alpha
         self.score_thresh = score_thresh
