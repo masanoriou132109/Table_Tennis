@@ -72,6 +72,9 @@ def main() -> None:
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3, help="球偵測信心門檻")
+    ap.add_argument("--zone-expand", type=float, default=None,
+                    help="場外閘門寬容度 (預設用教授的 TABLE_ZONE_EXPAND=700;"
+                         "轉播畫面桌子較小,建議收緊如 150)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
     args = ap.parse_args()
 
@@ -118,11 +121,24 @@ def main() -> None:
     cap.release()
 
     # 逐幀桌面區域閘門 (取代他 build_track 內用固定 H 的那段)
-    expand = de.TABLE_ZONE_EXPAND
+    expand = de.TABLE_ZONE_EXPAND if args.zone_expand is None else args.zone_expand
+    sorted_fis = sorted(H_by_frame)
+
+    def H_near(fi: int, max_dt: float = 0.5):
+        """取最接近的可用 H (桌面偵測短暫中斷時仍能過濾);超出時間窗回 None。"""
+        if not sorted_fis:
+            return None
+        best = min(sorted_fis, key=lambda k: abs(k - fi))
+        return H_by_frame[best] if abs(best - fi) / fps <= max_dt else None
+
     for fr in frames:
         H = H_by_frame.get(fr["frame"])
         if H is None:
-            continue  # 無桌面資訊的幀不過濾 (交由後續軌跡邏輯處理)
+            H = H_near(fr["frame"])
+        if H is None:
+            # 無任何可用桌面資訊 → 無法驗證球位置,且該處落點也無法映射,直接丟棄
+            fr["dets"] = []
+            continue
         kept = []
         for d in fr["dets"]:
             tx, ty = de.map_point(H, d["x"], d["y"])
@@ -132,7 +148,8 @@ def main() -> None:
 
     # 教授的演算法 (H=None: 映射改在外部用逐幀 H 做)
     track = de.build_track(frames, None, args.conf)
-    events, runs = de.detect_events(track, None)
+    # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError
+    events = [] if not track else de.detect_events(track, None)[0]
 
     def nearest_H(t: float):
         if not H_by_frame:
@@ -157,8 +174,11 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(
         {"video": args.video, "start": args.start, "dur": args.dur, "fps": fps,
+         "zone_expand": expand, "conf": args.conf,
          "frames_with_table": n_table, "frames_total": len(frames),
-         "track_points": len(track), "events": events}, ensure_ascii=False, indent=2))
+         "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
+         "track_points": len(track), "track": track, "events": events},
+        ensure_ascii=False, indent=2))
 
     bounces = [e for e in events if e.get("type") == "bounce"]
     hits = [e for e in events if e.get("type") == "hit"]
