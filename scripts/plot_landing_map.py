@@ -15,8 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-TABLE_W, TABLE_H = 500.0, 240.0   # 同教授 detect_events.py 的桌面座標空間
-SCALE = 2
+TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
+SCALE = 3.6                        # cm → 像素
 MARGIN = 60
 
 
@@ -56,8 +56,9 @@ def main() -> None:
         cv2.circle(img, (px, py), 7, col, -1)
         cv2.circle(img, (px, py), 7, (255, 255, 255), 1)
 
-    cv2.putText(img, "NEAR (y=0)", (ox, oy - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-    cv2.putText(img, "FAR (y=240)", (ox, oy + H + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(img, "NEAR (y=0cm)", (ox, oy - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(img, f"FAR (y={TABLE_H:.1f}cm)   274 x 152.5 cm", (ox, oy + H + 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     cv2.putText(img, f"bounces: {len(bounces)}", (ox + W - 170, oy - 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 

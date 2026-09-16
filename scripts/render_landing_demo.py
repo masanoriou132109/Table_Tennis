@@ -31,9 +31,9 @@ from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 
-TABLE_W, TABLE_H = 500.0, 240.0   # 同教授的桌面座標空間
+TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
 FLASH_SEC = 1.2                    # 新落點閃爍持續秒數
-MAP_SCALE = 0.62                   # 小視窗中桌面的縮放
+MAP_SCALE = 1.1                    # cm → 小視窗像素
 PAD = 16                           # 小視窗內邊距
 
 

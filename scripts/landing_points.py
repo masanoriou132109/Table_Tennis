@@ -38,6 +38,11 @@ from scripts.infer_video import predict  # noqa: E402
 
 BALL_INPUT = 640
 
+# ITTF 正規球桌尺寸 (cm)。教授原本 detect_events.py 寫 500x240 (長寬比 2.08),
+# 與真實球桌 (274/152.5 = 1.80) 不符 — 他已確認是筆誤。
+# 分區判定用的是比例,不受影響;但落點座標的物理意義與「離邊線幾公分」等量測需要正確尺寸。
+TABLE_W_CM, TABLE_H_CM = 274.0, 152.5
+
 
 def load_prof_module(repo: Path):
     """匯入教授的 detect_events.py (頂層只依賴 cv2/numpy,可安全 import)。"""
@@ -46,6 +51,9 @@ def load_prof_module(repo: Path):
         raise FileNotFoundError(f"找不到 {tools/'detect_events.py'}")
     sys.path.insert(0, str(tools))
     import detect_events as de  # noqa: E402
+    # 修正桌面尺寸 (教授確認原 500x240 為筆誤)。他的 build_homography / zone_of
+    # 都讀模組全域變數,所以在此覆寫即可讓整條管線使用正確尺寸,無需改他的檔案。
+    de.TABLE_W, de.TABLE_H = TABLE_W_CM, TABLE_H_CM
     return de
 
 
@@ -72,9 +80,10 @@ def main() -> None:
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3, help="球偵測信心門檻")
-    ap.add_argument("--zone-expand", type=float, default=None,
-                    help="場外閘門寬容度 (預設用教授的 TABLE_ZONE_EXPAND=700;"
-                         "轉播畫面桌子較小,建議收緊如 150)")
+    ap.add_argument("--zone-expand", type=float, default=0.4 * TABLE_W_CM,
+                    help="場外閘門寬容度 (cm,超出桌面此距離的球偵測視為誤判)。"
+                         "預設 0.4x 桌長 = 110cm;教授原值 700 是舊的 500 單位空間,"
+                         "對轉播畫面幾乎不過濾")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
     args = ap.parse_args()
 
@@ -121,7 +130,7 @@ def main() -> None:
     cap.release()
 
     # 逐幀桌面區域閘門 (取代他 build_track 內用固定 H 的那段)
-    expand = de.TABLE_ZONE_EXPAND if args.zone_expand is None else args.zone_expand
+    expand = args.zone_expand
     sorted_fis = sorted(H_by_frame)
 
     def H_near(fi: int, max_dt: float = 0.5):
