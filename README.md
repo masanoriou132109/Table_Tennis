@@ -95,7 +95,32 @@ labelme data/frames --output data/labelme \
       完整四邊形當先驗;被遮時用「先驗可見角→本格可見角」仿射對齊補出被遮角 (透視正確,
       合成測試 ~5px,遠優於單幀平行四邊形 ~49px)。只要整場看過桌子一次,之後每個回合
       開頭發球遮角也能立刻畫框 (滿足「一開始就有框」)。`src/smoothing.py` reference 機制。
-- [ ] 後續 (視需求): 球偵測/追蹤 (落點分析) / 解碼向量化 / 部署 Core ML (iOS/macOS 即時)
+- [x] Core ML 匯出 (`scripts/export_coreml.py`): 正規化與 sigmoid 內建於模型,
+      Swift 端餵 CVPixelBuffer 直接拿機率。ANE 1.6ms/幀,與 PyTorch 角點差異 0.026px。
+- [ ] 後續: TableTracker 移植 Swift → 接上 PingPongTracker app 的桌角校正 (取代手動點角)
+
+## Core ML 部署 (`Models/TableDetector.mlpackage`)
+
+```bash
+python scripts/export_coreml.py            # 產生 Models/TableDetector.mlpackage
+```
+
+| 項目 | 值 |
+|------|-----|
+| 模型大小 | 29 MB |
+| 推論 (Neural Engine) | **1.6 ms/幀 (638 fps)** |
+| 推論 (CPU only) | 10.6 ms/幀 (94 fps) |
+| 與 PyTorch 角點差異 | 0.026 px (12 張真實影格,可忽略) |
+
+介面:
+- 輸入 `image`: 512×288 RGB (ImageType,0~255);正規化已內建
+- 輸出 (皆已過 sigmoid): `heatmaps` [1,4,72,128]、`presence` [1]、`visibility` [1,4]
+
+Swift 端需自行實作: heatmap argmax → 5×5 鄰域加權質心 (subpixel) → ×stride 4 → 乘回原圖尺度,
+再套 `src/tracker.py` 的平滑/先驗補角/三重閘門 (設計上純幾何,無顏色依賴,可直接移植)。
+
+搭配 PingPongTracker app 時注意角點順序: 本專案為 `far_left, far_right, near_right, near_left`,
+該 app 為 `near-left, near-right, far-right, far-left` — 兩者互為反序 (`corners.reversed()`)。
 
 ## 影片級穩健性 (TableTracker)
 

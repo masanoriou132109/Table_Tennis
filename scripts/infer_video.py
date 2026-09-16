@@ -74,6 +74,7 @@ def main() -> None:
     parser.add_argument("--score-thresh", type=float, default=0.75)
     parser.add_argument("--smooth", action="store_true", help="video 模式啟用時序平滑")
     parser.add_argument("--grid", action="store_true", help="疊真實桌面座標網格 (homography)")
+    parser.add_argument("--show-scores", action="store_true", help="每個角標註模型原始信心分數")
     args = parser.parse_args()
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -115,6 +116,7 @@ def main() -> None:
             if not ok:
                 break
             coords, scores, presence = predict(model, frame, device, w, h)
+            raw_scores = scores.copy()  # 模型原始分數 (供標註)
             if tracker is not None:
                 quad = tracker.update(coords, scores, presence)
                 if quad is not None:  # 通過三重閘門且已確認
@@ -126,6 +128,12 @@ def main() -> None:
             if args.grid and presence > 0.5:
                 draw_table_grid(frame, coords)
             draw(frame, coords, scores, presence, args.score_thresh)
+            if args.show_scores and presence > 0.5:
+                for i in range(4):
+                    col = CORNER_COLORS[i] if scores[i] >= args.score_thresh else (0, 0, 255)
+                    x, y = int(coords[i][0]), int(coords[i][1])
+                    cv2.putText(frame, f"{raw_scores[i]:.2f}", (x + 8, y + 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
             writer.write(frame)
         writer.release()
         print(f"疊框影片輸出於 {out_path}  (smooth={'on' if tracker else 'off'})")
