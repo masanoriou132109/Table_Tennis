@@ -75,7 +75,7 @@ def ball_detections(ml, frame, conf_min: float) -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("video")
-    ap.add_argument("--prof-repo", default="/tmp/prof_tt", help="PingPongTracker repo 路徑")
+    ap.add_argument("--prof-repo", default=str(PROJECT_ROOT / "external" / "PingPongTracker"), help="PingPongTracker repo 路徑")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)

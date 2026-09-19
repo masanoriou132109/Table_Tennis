@@ -40,3 +40,6 @@ xcuserdata/
 # 保留: 標註成果與切分 (小而有價值)
 !data/annotations/
 !data/splits/
+
+# 外部參考 repo (教授的 PingPongTracker, 另行 clone)
+external/
