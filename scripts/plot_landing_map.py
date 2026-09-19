@@ -27,8 +27,11 @@ def main() -> None:
     args = ap.parse_args()
 
     data = json.loads(Path(args.json_path).read_text())
-    bounces = [e for e in data["events"]
-               if e.get("type") == "bounce" and e.get("table")]
+    allb = [e for e in data["events"] if e.get("type") == "bounce"]
+    # 只畫落在桌上的;桌外(疑似擊球誤判)與未映射的另計,不混入分佈
+    bounces = [e for e in allb if e.get("zone")]
+    n_off = sum(1 for e in allb if e.get("table") and not e.get("zone"))
+    n_unmapped = sum(1 for e in allb if not e.get("table"))
 
     W, H = int(TABLE_W * SCALE), int(TABLE_H * SCALE)
     img = np.full((H + 2 * MARGIN, W + 2 * MARGIN, 3), 30, np.uint8)
@@ -66,11 +69,12 @@ def main() -> None:
     cv2.imwrite(str(out), img, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
     zones = Counter(e.get("zone") for e in bounces)
-    print(f"落點 {len(bounces)} 個")
-    print("分區統計:", dict(sorted((k, v) for k, v in zones.items() if k)))
-    off = zones.get(None, 0)
-    if off:
-        print(f"  (另有 {off} 個落在桌面外,未計入分區)")
+    print(f"桌上落點 {len(bounces)} 個 (事件總數 {len(allb)})")
+    print("分區統計:", dict(sorted(zones.items())))
+    if n_off:
+        print(f"  桌外 {n_off} 個 — 疑似球拍擊球被誤判為落點,未計入")
+    if n_unmapped:
+        print(f"  未映射 {n_unmapped} 個 — 當時無桌面偵測結果,無法定位")
     print(f"輸出 {out}")
 
 

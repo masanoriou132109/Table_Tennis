@@ -88,9 +88,15 @@ def draw_minimap(canvas, bounces, now, origin):
     cv2.putText(canvas, "NEAR", (tx0 + 3, ty0 + th - 5), cv2.FONT_HERSHEY_SIMPLEX,
                 0.35, (180, 180, 180), 1, cv2.LINE_AA)
 
-    label = f"BOUNCES  {len(bounces)}"
-    flash_zone = None
-    for e in bounces:
+    on_table = [e for e in bounces if e.get("zone")]
+    off_table = [e for e in bounces if e.get("table") and not e.get("zone")]
+    unmapped = [e for e in bounces if not e.get("table")]
+    label = f"BOUNCES  {len(on_table)}"
+    if off_table or unmapped:
+        label += f"   (off {len(off_table)} / unmap {len(unmapped)})"
+
+    flash = None
+    for e in on_table:
         # 垂直翻轉: 桌面座標 y=0 是近端,但影片中近端在畫面下方,翻轉後小視窗與影片同向
         px = tx0 + int(e["table"][0] * MAP_SCALE)
         py = ty0 + th - int(e["table"][1] * MAP_SCALE)
@@ -99,16 +105,18 @@ def draw_minimap(canvas, bounces, now, origin):
             r = int(6 + 14 * (age / FLASH_SEC))
             cv2.circle(canvas, (px, py), r, (0, 255, 255), 2)
             cv2.circle(canvas, (px, py), 6, (0, 255, 255), -1)
-            flash_zone = e.get("zone")
+            flash = f"BOUNCE  zone {e['zone']}"
         else:                      # 歷史落點: 暗紅小點
             cv2.circle(canvas, (px, py), 4, (90, 90, 230), -1)
             cv2.circle(canvas, (px, py), 4, (220, 220, 220), 1)
+    for e in off_table + unmapped:  # 可疑事件也要讓使用者看到,不靜默丟棄
+        if 0 <= now - e["t"] < FLASH_SEC:
+            flash = "BOUNCE  OFF-TABLE (suspect)" if e.get("table") else "BOUNCE  UNMAPPED (no table)"
 
-    if flash_zone:
-        label = f"BOUNCE  zone {flash_zone}"
-    color = (0, 255, 255) if flash_zone else (220, 220, 220)
-    cv2.putText(canvas, label, (tx0, oy + PAD + 12),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
+    color = (0, 255, 255) if flash and "zone" in flash else \
+            ((40, 170, 255) if flash else (220, 220, 220))
+    cv2.putText(canvas, flash or label, (tx0, oy + PAD + 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
 
 def main() -> None:
@@ -120,8 +128,9 @@ def main() -> None:
     args = ap.parse_args()
 
     data = json.loads(Path(args.json_path).read_text())
-    bounces = [e for e in data["events"]
-               if e.get("type") == "bounce" and e.get("table")]
+    # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
+    # 先前只取有 table 的,導致未映射的落點在 demo 中完全消失。
+    bounces = [e for e in data["events"] if e.get("type") == "bounce"]
     video, fps = data["video"], data["fps"]
     start, dur = data["start"], data["dur"]
     # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
@@ -172,14 +181,24 @@ def main() -> None:
         cv2.putText(frame, f"t={now:.2f}s", (25, 75), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (200, 200, 200), 1)
 
-        # 主畫面: 閃爍中的落點位置
+        # 主畫面: 閃爍中的落點位置 (依可信度上色)
         for e in bounces:
             age = now - e["t"]
-            if 0 <= age < FLASH_SEC:
-                x, y = int(e["x"]), int(e["y"])
-                r = int(14 + 26 * (age / FLASH_SEC))
-                cv2.circle(frame, (x, y), r, (0, 255, 255), 2)
-                cv2.circle(frame, (x, y), 5, (0, 255, 255), -1)
+            if not (0 <= age < FLASH_SEC):
+                continue
+            if e.get("zone"):
+                col, tag = (0, 255, 255), None          # 桌上: 黃
+            elif e.get("table"):
+                col, tag = (40, 170, 255), "OFF-TABLE"  # 桌外: 橘 (疑似擊球誤判)
+            else:
+                col, tag = (160, 160, 160), "UNMAPPED"  # 無桌面資訊: 灰
+            x, y = int(e["x"]), int(e["y"])
+            r = int(14 + 26 * (age / FLASH_SEC))
+            cv2.circle(frame, (x, y), r, col, 2)
+            cv2.circle(frame, (x, y), 5, col, -1)
+            if tag:
+                cv2.putText(frame, tag, (x + 22, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
 
         draw_track_strip(frame, history, now, args.window, origin[0] - 20)
         draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)

@@ -57,6 +57,44 @@ def load_prof_module(repo: Path):
     return de
 
 
+def patch_debounce(de):
+    """修正: find_reversals 的去抖動不分方向,落點會被附近的「頂點」壓過。
+
+    他的流程是「先去抖動(只留最強的)→ 再過濾方向」。球的最高點 (升→降) 速度通常
+    比反彈 (降→升) 大,於是在 EVENT_DEBOUNCE 窗內把真正的落點吸收掉,方向過濾後
+    整個群集變成空的。實測 Doha 有 3 個落點因此消失。
+
+    改為「先過濾方向 → 再去抖動」。只影響 key=='y' (落點);擊球 (key=='x') 不變。
+    """
+    orig = de.find_reversals
+
+    def find_reversals_dir_first(run, key, min_speed):
+        if key != "y":
+            return orig(run, key, min_speed)
+        cands = []
+        for i in range(1, len(run) - 1):
+            bf, af = de.windowed_slope(run, i, key)
+            if bf is None or af is None:
+                continue
+            if bf > 0 > af and abs(bf) > min_speed and abs(af) > min_speed:
+                cands.append((i, abs(bf) + abs(af)))
+        kept = []
+        for i, strength in cands:
+            if kept:
+                j = kept[-1][0]
+                close_t = run[i]["t"] - run[j]["t"] < de.EVENT_DEBOUNCE
+                close_p = np.hypot(run[i]["x"] - run[j]["x"],
+                                   run[i]["y"] - run[j]["y"]) < de.EVENT_DEBOUNCE_DIST
+                if close_t and close_p:
+                    if strength > kept[-1][1]:
+                        kept[-1] = (i, strength)
+                    continue
+            kept.append((i, strength))
+        return [i for i, _ in kept]
+
+    de.find_reversals = find_reversals_dir_first
+
+
 def ball_detections(ml, frame, conf_min: float) -> list[dict]:
     """跑 Core ML 球偵測器,回傳原圖座標的候選點。"""
     from PIL import Image
@@ -90,11 +128,15 @@ def main() -> None:
                          "同樣的物理反彈像素速度小 4~5 倍,固定 px 門檻會誤殺真實落點")
     ap.add_argument("--min-y-speed", type=float, default=None,
                     help="直接指定 y 速度底限 (px/s),覆蓋 --min-y-speed-frac")
+    ap.add_argument("--no-fix-debounce", action="store_true",
+                    help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
     args = ap.parse_args()
 
     repo = Path(args.prof_repo)
     de = load_prof_module(repo)
+    if not args.no_fix_debounce:
+        patch_debounce(de)
     import coremltools as ct
     ball_model = ct.models.MLModel(str(repo / "Models" / "BallDetector.mlpackage"),
                                    compute_units=ct.ComputeUnit.CPU_ONLY)
