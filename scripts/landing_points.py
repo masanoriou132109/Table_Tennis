@@ -84,6 +84,12 @@ def main() -> None:
                     help="場外閘門寬容度 (cm,超出桌面此距離的球偵測視為誤判)。"
                          "預設 0.4x 桌長 = 110cm;教授原值 700 是舊的 500 單位空間,"
                          "對轉播畫面幾乎不過濾")
+    ap.add_argument("--min-y-speed-frac", type=float, default=0.12,
+                    help="落點 y 速度噪音底限,以「桌面在畫面中的高度」的倍率表示 (每秒)。"
+                         "教授原值 40px/s 是針對桌子佔滿畫面的取景;轉播畫面桌高僅約 130px,"
+                         "同樣的物理反彈像素速度小 4~5 倍,固定 px 門檻會誤殺真實落點")
+    ap.add_argument("--min-y-speed", type=float, default=None,
+                    help="直接指定 y 速度底限 (px/s),覆蓋 --min-y-speed-frac")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
     args = ap.parse_args()
 
@@ -110,6 +116,7 @@ def main() -> None:
 
     frames: list[dict] = []
     H_by_frame: dict[int, np.ndarray] = {}
+    quads_px: list[np.ndarray] = []   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
     n_table = 0
     for i in range(n_frames):
         ok, frame = cap.read()
@@ -123,6 +130,7 @@ def main() -> None:
         if quad is not None:
             # 我們的 [FL,FR,NR,NL] → 他的 [NL,NR,FR,FL] (互為反序)
             H_by_frame[fi] = de.build_homography(quad[::-1].astype(np.float32))
+            quads_px.append(quad)
             n_table += 1
 
         frames.append({"t": t, "frame": fi,
@@ -154,6 +162,14 @@ def main() -> None:
             if -expand <= tx <= de.TABLE_W + expand and -expand <= ty <= de.TABLE_H + expand:
                 kept.append(d)
         fr["dets"] = kept
+
+    # y 速度底限依桌面在畫面中的大小縮放 (見 --min-y-speed-frac 說明)
+    if args.min_y_speed is not None:
+        de.MIN_Y_SPEED = args.min_y_speed
+    elif quads_px:
+        table_px_h = float(np.median([q[:, 1].max() - q[:, 1].min() for q in quads_px]))
+        de.MIN_Y_SPEED = args.min_y_speed_frac * table_px_h
+    print(f"MIN_Y_SPEED = {de.MIN_Y_SPEED:.1f} px/s")
 
     # 教授的演算法 (H=None: 映射改在外部用逐幀 H 做)
     track = de.build_track(frames, None, args.conf)
