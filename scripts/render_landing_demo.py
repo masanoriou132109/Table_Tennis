@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""輸出帶「落點小視窗」的示範影片。
+"""輸出完整示範影片: 桌面偵測 + 球軌跡 + 落點。
 
 畫面內容:
-  - 主畫面: 原始影片 + 本專案偵測的桌面四邊形 (逐幀)
-  - 右下小視窗: 俯視桌面圖,累積顯示已偵測到的落點;
-    偵測到新落點時該點會放大閃爍並顯示分區 (同時在主畫面標出位置)
+  - 主畫面: 原始影片 + 桌面四邊形 (逐幀偵測)
+  - 球: 綠圈標出該幀進入軌跡的球 (即實際餵給落點演算法的點)
+  - 左上 HUD: BALL <conf> / NO BALL + 時間戳
+  - 底部時間軸: 最近 --window 秒的球軌跡覆蓋 (綠=有, 暗紅=無)
+    → 可直接對照「軌跡有空隙」與「該處沒測到落點」的關係
+  - 右下小視窗: 俯視桌面,累積顯示落點;新落點放大閃爍並顯示分區
 
-落點事件讀自 scripts/landing_points.py 產生的 JSON (不重跑球偵測),
-桌面四邊形則重跑 TableTracker (每幀約數毫秒)。
+資料全部讀自 scripts/landing_points.py 的 JSON (球軌跡與事件都在裡面,
+不需重跑球偵測),僅重跑 TableTracker 畫桌面框 (每幀數毫秒)。
 
 用法:
     python scripts/render_landing_demo.py data/landing_xxx.json
@@ -35,6 +38,27 @@ TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
 FLASH_SEC = 1.2                    # 新落點閃爍持續秒數
 MAP_SCALE = 1.1                    # cm → 小視窗像素
 PAD = 16                           # 小視窗內邊距
+STRIP_H = 20                       # 底部球軌跡時間軸高度
+
+
+def draw_track_strip(frame, history, now, window_sec, x_right):
+    """底部時間軸: 最近 window_sec 秒球軌跡是否有點 (綠=有, 暗紅=無)。"""
+    h = frame.shape[0]
+    x0, x1 = 20, x_right
+    y0 = h - STRIP_H - 18
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (35, 35, 35), -1)
+    t_start = now - window_sec
+    for t, present in history:
+        if t < t_start:
+            continue
+        px = x0 + int((t - t_start) / window_sec * (x1 - x0))
+        cv2.line(frame, (px, y0 + 2), (px, y0 + STRIP_H - 2),
+                 (60, 200, 60) if present else (40, 40, 90), 2)
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (180, 180, 180), 1)
+    cv2.putText(frame, f"ball track  -{window_sec:.0f}s", (x0, y0 - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+    cv2.putText(frame, "now", (x1 - 32, y0 - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
 
 def draw_minimap(canvas, bounces, now, origin):
@@ -91,6 +115,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("json_path")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--window", type=float, default=12.0, help="時間軸顯示秒數")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -99,6 +124,8 @@ def main() -> None:
                if e.get("type") == "bounce" and e.get("table")]
     video, fps = data["video"], data["fps"]
     start, dur = data["start"], data["dur"]
+    # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
+    track_by_frame = {p["frame"]: p for p in data.get("track", [])}
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
@@ -121,16 +148,29 @@ def main() -> None:
     map_h = int(TABLE_H * MAP_SCALE) + PAD * 2 + 22
     origin = (w - map_w - 20, h - map_h - 20)   # 右下角
 
+    history: list[tuple[float, bool]] = []
     for i in range(int(dur * fps)):
         ok, frame = cap.read()
         if not ok:
             break
-        now = (start_f + i) / fps
+        fi = start_f + i
+        now = fi / fps
 
         coords, scores, presence = predict(model, frame, device, w, h)
         quad = tracker.update(coords, scores, presence)
         if quad is not None:
             cv2.polylines(frame, [quad.astype(np.int32)], True, (0, 255, 0), 2)
+
+        # 球 (軌跡點)
+        bp = track_by_frame.get(fi)
+        history.append((now, bp is not None))
+        if bp is not None:
+            cv2.circle(frame, (int(bp["x"]), int(bp["y"])), 15, (60, 220, 60), 2)
+        hud = f"BALL {bp['conf']:.2f}" if bp else "NO BALL"
+        cv2.putText(frame, hud, (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                    (60, 220, 60) if bp else (60, 60, 230), 2)
+        cv2.putText(frame, f"t={now:.2f}s", (25, 75), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, (200, 200, 200), 1)
 
         # 主畫面: 閃爍中的落點位置
         for e in bounces:
@@ -141,6 +181,7 @@ def main() -> None:
                 cv2.circle(frame, (x, y), r, (0, 255, 255), 2)
                 cv2.circle(frame, (x, y), 5, (0, 255, 255), -1)
 
+        draw_track_strip(frame, history, now, args.window, origin[0] - 20)
         draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)
         writer.write(frame)
 
