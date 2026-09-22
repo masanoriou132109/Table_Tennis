@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dataset import IMAGENET_MEAN, IMAGENET_STD, INPUT_H, INPUT_W  # noqa: E402
 from src.homography import draw_table_grid  # noqa: E402
+from src.edge_refine import refine_quad  # noqa: E402
 from src.model import TableKeypointNet, decode_heatmaps  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 
@@ -75,6 +76,11 @@ def main() -> None:
     parser.add_argument("--smooth", action="store_true", help="video 模式啟用時序平滑")
     parser.add_argument("--grid", action="store_true", help="疊真實桌面座標網格 (homography)")
     parser.add_argument("--show-scores", action="store_true", help="每個角標註模型原始信心分數")
+    parser.add_argument("--edge-refine", action="store_true",
+                        help="用桌面邊線精修角點 (需 --smooth);遮擋角改由兩條邊線交點決定")
+    parser.add_argument("--edge-alpha", type=float, default=0.5,
+                        help="精修結果的時序平滑係數 (小=穩定但反應慢)")
+    parser.add_argument("--out", default=None, help="輸出檔名 (video 模式)")
     args = parser.parse_args()
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -104,12 +110,13 @@ def main() -> None:
             cv2.imwrite(str(out_dir / f"{k:02d}_f{fi}.jpg"), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         print(f"抽樣疊圖輸出於 {out_dir}")
     else:
-        out_path = PROJECT_ROOT / "data" / f"infer_{stem}.mp4"
+        out_path = Path(args.out) if args.out else PROJECT_ROOT / "data" / f"infer_{stem}.mp4"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         start_f = int(args.start * fps)
         end_f = min(total, int((args.start + args.dur) * fps))
         tracker = TableTracker(w, h, score_thresh=args.score_thresh) if args.smooth else None
+        edge_state = None   # 精修結果的 EMA 狀態 (抑制逐幀抖動)
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
         for _ in range(end_f - start_f):
             ok, frame = cap.read()
@@ -125,6 +132,13 @@ def main() -> None:
                     presence = 1.0
                 else:
                     presence = 0.0  # 未確認/被閘門擋下 → 不繪製
+                    edge_state = None
+            if args.edge_refine and tracker is not None and presence > 0.5:
+                refined, _, _ = refine_quad(frame, coords, tracker.smoother.confident,
+                                            reference=tracker.smoother.reference)
+                edge_state = refined if edge_state is None else \
+                    (1 - args.edge_alpha) * edge_state + args.edge_alpha * refined
+                coords = edge_state
             if args.grid and presence > 0.5:
                 draw_table_grid(frame, coords)
             draw(frame, coords, scores, presence, args.score_thresh)

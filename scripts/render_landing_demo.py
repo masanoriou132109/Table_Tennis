@@ -124,8 +124,13 @@ def main() -> None:
     ap.add_argument("json_path")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--window", type=float, default=12.0, help="時間軸顯示秒數")
+    ap.add_argument("--parts", default="table,ball,strip,bounce,map",
+                    help="要顯示的元件,逗號分隔: table,ball,strip,bounce,map")
+    ap.add_argument("--map-pos", default="br", choices=("br", "tr", "bl", "tl"),
+                    help="小視窗位置: br=右下 tr=右上 bl=左下 tl=左上")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    parts = {p.strip() for p in args.parts.split(",") if p.strip()}
 
     data = json.loads(Path(args.json_path).read_text())
     # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
@@ -155,7 +160,11 @@ def main() -> None:
 
     map_w = int(TABLE_W * MAP_SCALE) + PAD * 2
     map_h = int(TABLE_H * MAP_SCALE) + PAD * 2 + 22
-    origin = (w - map_w - 20, h - map_h - 20)   # 右下角
+    M = 20
+    origin = {"br": (w - map_w - M, h - map_h - M),
+              "tr": (w - map_w - M, M),
+              "bl": (M, h - map_h - M),
+              "tl": (M, M)}[args.map_pos]
 
     history: list[tuple[float, bool]] = []
     for i in range(int(dur * fps)):
@@ -167,22 +176,23 @@ def main() -> None:
 
         coords, scores, presence = predict(model, frame, device, w, h)
         quad = tracker.update(coords, scores, presence)
-        if quad is not None:
+        if quad is not None and "table" in parts:
             cv2.polylines(frame, [quad.astype(np.int32)], True, (0, 255, 0), 2)
 
         # 球 (軌跡點)
         bp = track_by_frame.get(fi)
         history.append((now, bp is not None))
-        if bp is not None:
-            cv2.circle(frame, (int(bp["x"]), int(bp["y"])), 15, (60, 220, 60), 2)
-        hud = f"BALL {bp['conf']:.2f}" if bp else "NO BALL"
-        cv2.putText(frame, hud, (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
-                    (60, 220, 60) if bp else (60, 60, 230), 2)
+        if "ball" in parts:
+            if bp is not None:
+                cv2.circle(frame, (int(bp["x"]), int(bp["y"])), 15, (60, 220, 60), 2)
+            hud = f"BALL {bp['conf']:.2f}" if bp else "NO BALL"
+            cv2.putText(frame, hud, (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                        (60, 220, 60) if bp else (60, 60, 230), 2)
         cv2.putText(frame, f"t={now:.2f}s", (25, 75), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (200, 200, 200), 1)
 
         # 主畫面: 閃爍中的落點位置 (依可信度上色)
-        for e in bounces:
+        for e in (bounces if "bounce" in parts else []):
             age = now - e["t"]
             if not (0 <= age < FLASH_SEC):
                 continue
@@ -200,8 +210,11 @@ def main() -> None:
                 cv2.putText(frame, tag, (x + 22, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
 
-        draw_track_strip(frame, history, now, args.window, origin[0] - 20)
-        draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)
+        if "strip" in parts:
+            strip_right = origin[0] - 20 if args.map_pos in ("br", "bl") else w - 20
+            draw_track_strip(frame, history, now, args.window, strip_right)
+        if "map" in parts:
+            draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)
         writer.write(frame)
 
     writer.release()
