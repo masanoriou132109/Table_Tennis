@@ -218,8 +218,9 @@ def refine_quad(image: np.ndarray, quad: np.ndarray,
       可信角只微調 (模型已準到約 2px);被遮角由先驗補出可能偏 15~40px,
       此時邊線交點是唯一的真實影像證據,允許大幅修正。
 
-    回傳 (refined_quad, ok, infos) — ok[i] 表示該角確實被更新;
-    infos 為 4 條邊的擬合資訊 (供診斷)。
+    回傳 (refined_quad, ok, infos):
+      ok[i] = 0 未更新 / 1 由兩條邊交點決定 / 2 僅投影到單一可用邊
+      infos 為 4 條邊的擬合資訊 (供診斷)。
     """
     if confident is None:
         confident = np.ones(4, bool)
@@ -245,21 +246,37 @@ def refine_quad(image: np.ndarray, quad: np.ndarray,
         infos[i]["accepted"] = edge_accepted(infos[i], ref_dirs[i])
 
     out = quad.astype(np.float64).copy()
-    ok = np.zeros(4, bool)
+    ok = np.zeros(4, np.int8)
     for i in range(4):
         i1, i2 = (i - 1) % 4, i          # 角 i = 邊 i-1 與 邊 i 的交點
         e1, e2 = infos[i1], infos[i2]
-        if not (e1["accepted"] and e2["accepted"]):
-            continue
-        p = np.cross(e1["line"], e2["line"])
-        if abs(p[2]) < 1e-9:
-            continue
-        cand = p[:2] / p[2]
-        # 外插誤差推估: 兩條邊都要夠可靠
-        if max(_pred_error(e1, cand), _pred_error(e2, cand)) > MAX_PRED_ERR:
-            continue
         limit = shift_confident if confident[i] else shift_occluded
+
+        if e1["accepted"] and e2["accepted"]:
+            p = np.cross(e1["line"], e2["line"])
+            if abs(p[2]) < 1e-9:
+                continue
+            cand = p[:2] / p[2]
+            if max(_pred_error(e1, cand), _pred_error(e2, cand)) > MAX_PRED_ERR:
+                continue
+            method = 1
+        elif e1["accepted"] or e2["accepted"]:
+            # 只有一條邊可用 (例如右邊被球員整個擋住, 但近端邊完全可見):
+            # 一條線不能決定點, 但能決定一半 —— 把先驗角垂直投影到該線上,
+            # 消去垂直於該邊的誤差分量。若線正確, 投影只會讓誤差變小,
+            # 不可能變大 (投影是點到線距離的下界), 故為零風險的部分修正。
+            e = e1 if e1["accepted"] else e2
+            a, b, c = e["line"]
+            nrm = np.array([a, b])
+            nrm = nrm / max(np.linalg.norm(nrm), 1e-9)
+            cand = quad[i] - nrm * float(a * quad[i][0] + b * quad[i][1] + c)
+            if _pred_error(e, cand) > MAX_PRED_ERR:
+                continue
+            method = 2
+        else:
+            continue
+
         if np.linalg.norm(cand - quad[i]) <= limit:
             out[i] = cand
-            ok[i] = True
+            ok[i] = method
     return out, ok, infos

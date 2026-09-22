@@ -81,7 +81,8 @@ def render_case(frame, quad, conf, ref, tag, out: Path):
                    (0, 255, 0) if conf[i] else (0, 0, 255), -1)
         if ok_mask[i]:
             cv2.circle(vis, tuple(refined[i].astype(int)), 9, (0, 180, 255), 2)
-    moved = [f"{CN[i]}{np.linalg.norm(refined[i]-quad[i]):.0f}" for i in range(4) if ok_mask[i]]
+    moved = [f"{CN[i]}{np.linalg.norm(refined[i]-quad[i]):.0f}"
+             f"{'(proj)' if ok_mask[i] == 2 else ''}" for i in range(4) if ok_mask[i]]
     cv2.putText(vis, f"{tag}   green=prior/inliers  orange=refined  red=rejected pts",
                 (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     cv2.putText(vis, f"moved: {moved if moved else 'none'}", (20, 58),
