@@ -30,6 +30,7 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.edge_refine import refine_quad  # noqa: E402
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
@@ -128,6 +129,8 @@ def main() -> None:
                     help="要顯示的元件,逗號分隔: table,ball,strip,bounce,map")
     ap.add_argument("--map-pos", default="br", choices=("br", "tr", "bl", "tl"),
                     help="小視窗位置: br=右下 tr=右上 bl=左下 tl=左上")
+    ap.add_argument("--edge-alpha", type=float, default=0.3,
+                    help="edge 精修結果的 EMA 係數 (與出貨用的 infer_video 一致)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     parts = {p.strip() for p in args.parts.split(",") if p.strip()}
@@ -167,6 +170,7 @@ def main() -> None:
               "tl": (M, M)}[args.map_pos]
 
     history: list[tuple[float, bool]] = []
+    edge_state = None   # 精修結果的 EMA 狀態 (抑制逐幀抖動)
     for i in range(int(dur * fps)):
         ok, frame = cap.read()
         if not ok:
@@ -176,8 +180,17 @@ def main() -> None:
 
         coords, scores, presence = predict(model, frame, device, w, h)
         quad = tracker.update(coords, scores, presence)
-        if quad is not None and "table" in parts:
-            cv2.polylines(frame, [quad.astype(np.int32)], True, (0, 255, 0), 2)
+        # 桌面框走與出貨相同的管線: 追蹤器 → edge 精修 → EMA。只畫矩形框,
+        # 不畫角點或信心 (此 demo 的重點是落點, 桌面只是參考框)。
+        if quad is None:
+            edge_state = None
+        else:
+            refined, _, _ = refine_quad(frame, quad, tracker.smoother.confident,
+                                        reference=tracker.smoother.reference)
+            edge_state = refined if edge_state is None else \
+                (1 - args.edge_alpha) * edge_state + args.edge_alpha * refined
+            if "table" in parts:
+                cv2.polylines(frame, [edge_state.astype(np.int32)], True, (0, 255, 0), 2)
 
         # 球 (軌跡點)
         bp = track_by_frame.get(fi)

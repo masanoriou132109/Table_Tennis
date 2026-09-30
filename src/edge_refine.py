@@ -34,6 +34,20 @@ MAX_PRED_ERR = 3.0    # px: 外插到角點的推估誤差上限 2σD/(S·√N)
 NOISE_PX = 0.7        # px: 假設的每點垂直雜訊 (用於誤差推估)
 MAX_ANGLE_DEV = 12.0  # deg: 擬合線與參考邊方向的最大夾角 (擋掉選錯連續段)
 
+# 「強證據」門檻: 用來鬆綁可信角的位移上限, 比 edge_accepted 嚴格得多。
+# 動機: 模型偶爾把某角放到球員身上而分數仍勉強過門檻 (實測 0.77, 偏移 15~30px),
+# 此時 shift_confident=4px 反而鎖死了唯一能救它的影像證據。
+# 只有這條邊「長、密、方向對、外插誤差小」時才鬆綁, 其餘情況維持原本的保守上限。
+STRONG_INLIER_FRAC = 0.5   # 連續段點數 / N_SAMPLES
+STRONG_SPAN_FRAC = 0.5     # 連續段跨距 / 邊長
+STRONG_PRED_ERR = 1.5      # px: 比 MAX_PRED_ERR 更嚴的外插誤差上限
+STRONG_ANGLE_DEV = 5.0     # deg: 比 MAX_ANGLE_DEV 更嚴的方向一致性
+# 覆寫的死區下限。沒有這個下限時, 跨五個場地有 23~91% 的幀都在覆寫, 位移中位數只有
+# 4~6px 且該角分數都 0.9+ —— 那是在搬動本來就對的角 (模型正常誤差約 2px, 加上白邊帶
+# 本身有幾 px 的位置歧義), 等於把模型輸出整體換成邊線輸出, 不是我們要的。
+# 邏輯改成二分: 分歧小 → 相信模型; 分歧大且邊線證據強 → 相信邊線; 中間地帶不動。
+OVERRIDE_MIN = 10.0       # px: 小於此位移不啟用覆寫 (維持原本的保守上限)
+
 
 def _sample_edge(gray: np.ndarray, p0: np.ndarray, p1: np.ndarray,
                  t_lo: float, t_hi: float):
@@ -206,11 +220,30 @@ def edge_accepted(info, ref_dir=None) -> bool:
     return True
 
 
+def edge_strong(info) -> bool:
+    """這條邊的證據是否強到可以覆寫「模型自認可信」的角。
+
+    edge_accepted 的門檻是「能不能用來修被遮角」(反正先驗補出的角本來就偏 15~40px,
+    修了幾乎只會更好)。要覆寫可信角則不同: 模型在正常情況下準到約 2px, 修錯的代價
+    比修對的收益大, 所以要求整條邊有過半長度的連續支撐、方向幾乎與先驗一致。
+    """
+    if not info.get("accepted"):
+        return False
+    if info["n_inliers"] < STRONG_INLIER_FRAC * N_SAMPLES:
+        return False
+    if info["span"] < STRONG_SPAN_FRAC * info["length"]:
+        return False
+    ad = info.get("angle_dev", float("nan"))
+    return not np.isnan(ad) and ad <= STRONG_ANGLE_DEV
+
+
 def refine_quad(image: np.ndarray, quad: np.ndarray,
                 confident: np.ndarray | None = None,
                 reference: np.ndarray | None = None,
                 shift_confident: float = 4.0,
                 shift_occluded: float = 45.0,
+                shift_strong: float = 30.0,
+                strong_override: bool = True,
                 seed: int = 0):
     """用邊線精修四邊形角點。
 
@@ -218,9 +251,13 @@ def refine_quad(image: np.ndarray, quad: np.ndarray,
       可信角只微調 (模型已準到約 2px);被遮角由先驗補出可能偏 15~40px,
       此時邊線交點是唯一的真實影像證據,允許大幅修正。
 
+    strong_override: 可信角若遇到 edge_strong 的兩條 (或單條) 邊, 上限放寬到
+      shift_strong。這是為了救「模型自信地把角放到球員身上」那種幀 —
+      該角分數過門檻, 但通往它的邊其實清楚可見。關掉即回到舊行為。
+
     回傳 (refined_quad, ok, infos):
       ok[i] = 0 未更新 / 1 由兩條邊交點決定 / 2 僅投影到單一可用邊
-      infos 為 4 條邊的擬合資訊 (供診斷)。
+      infos 為 4 條邊的擬合資訊 (供診斷, 含 accepted / strong)。
     """
     if confident is None:
         confident = np.ones(4, bool)
@@ -244,39 +281,49 @@ def refine_quad(image: np.ndarray, quad: np.ndarray,
         infos[i]["angle_dev"] = (_angle_dev(infos[i]["line"], ref_dirs[i])
                                  if infos[i]["line"] is not None else float("nan"))
         infos[i]["accepted"] = edge_accepted(infos[i], ref_dirs[i])
+        infos[i]["strong"] = edge_strong(infos[i])
 
     out = quad.astype(np.float64).copy()
     ok = np.zeros(4, np.int8)
     for i in range(4):
         i1, i2 = (i - 1) % 4, i          # 角 i = 邊 i-1 與 邊 i 的交點
         e1, e2 = infos[i1], infos[i2]
-        limit = shift_confident if confident[i] else shift_occluded
 
+        # 依偏好順序列出候選: (座標, method, 外插誤差, 是否強證據)
+        cands = []
         if e1["accepted"] and e2["accepted"]:
             p = np.cross(e1["line"], e2["line"])
-            if abs(p[2]) < 1e-9:
+            if abs(p[2]) > 1e-9:
+                c12 = p[:2] / p[2]
+                cands.append((c12, 1, max(_pred_error(e1, c12), _pred_error(e2, c12)),
+                              e1["strong"] and e2["strong"]))
+        # 單邊投影: 交點不存在, 或交點被位移上限擋下時的退路。
+        # 一條線不能決定點, 但能決定一半 —— 把角垂直投影到該線上, 消去垂直於該邊的
+        # 誤差分量。若線正確, 投影只會讓誤差變小 (點到線距離是誤差的下界), 不可能變大。
+        # 這條退路對「兩邊都 accepted 但只有一邊 strong」特別關鍵: 交點受制於較弱的
+        # 那條邊而動不了, 但強的那條邊仍足以修掉一個方向的大偏移。
+        projs = []
+        for e in (e1, e2):
+            if not e["accepted"]:
                 continue
-            cand = p[:2] / p[2]
-            if max(_pred_error(e1, cand), _pred_error(e2, cand)) > MAX_PRED_ERR:
-                continue
-            method = 1
-        elif e1["accepted"] or e2["accepted"]:
-            # 只有一條邊可用 (例如右邊被球員整個擋住, 但近端邊完全可見):
-            # 一條線不能決定點, 但能決定一半 —— 把先驗角垂直投影到該線上,
-            # 消去垂直於該邊的誤差分量。若線正確, 投影只會讓誤差變小,
-            # 不可能變大 (投影是點到線距離的下界), 故為零風險的部分修正。
-            e = e1 if e1["accepted"] else e2
             a, b, c = e["line"]
             nrm = np.array([a, b])
             nrm = nrm / max(np.linalg.norm(nrm), 1e-9)
-            cand = quad[i] - nrm * float(a * quad[i][0] + b * quad[i][1] + c)
-            if _pred_error(e, cand) > MAX_PRED_ERR:
-                continue
-            method = 2
-        else:
-            continue
+            cp = quad[i] - nrm * float(a * quad[i][0] + b * quad[i][1] + c)
+            projs.append((cp, 2, _pred_error(e, cp), e["strong"]))
+        projs.sort(key=lambda r: (not r[3], r[2]))   # 強證據優先, 再比外插誤差
+        cands.extend(projs)
 
-        if np.linalg.norm(cand - quad[i]) <= limit:
-            out[i] = cand
-            ok[i] = method
+        for cand, method, err, strong in cands:
+            if err > MAX_PRED_ERR:
+                continue
+            shift = float(np.linalg.norm(cand - quad[i]))
+            limit = shift_confident if confident[i] else shift_occluded
+            if (confident[i] and strong_override and strong
+                    and err <= STRONG_PRED_ERR and shift > OVERRIDE_MIN):
+                limit = max(limit, shift_strong)   # 大幅分歧 + 邊線證據強 → 覆寫可信角
+            if shift <= limit:
+                out[i] = cand
+                ok[i] = method
+                break
     return out, ok, infos
