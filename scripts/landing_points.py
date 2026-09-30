@@ -3,7 +3,8 @@
 
 串接方式 (完全不修改教授的程式碼):
   1. 本專案 TableKeypointNet + TableTracker → 每幀桌面 4 角 → 每幀 homography
-  2. 教授的 Models/BallDetector.mlpackage (YOLO26, Core ML) → 每幀球偵測
+  2. 教授的球偵測 Core ML (預設 YOLO26 Models/BallDetector.mlpackage;
+     --ball-model 可換成 RF-DETR 匯出, 格式自動判斷) → 每幀球偵測
   3. 教授 Tools/detect_events.py 的 build_track / detect_events (傳 H=None)
   4. 落點事件用「該事件時刻的那一幀」的 H 映射成桌面座標與分區
 
@@ -35,8 +36,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
-
-BALL_INPUT = 640
 
 # ITTF 正規球桌尺寸 (cm)。教授原本 detect_events.py 寫 500x240 (長寬比 2.08),
 # 與真實球桌 (274/152.5 = 1.80) 不符 — 他已確認是筆誤。
@@ -95,17 +94,51 @@ def patch_debounce(de):
     de.find_reversals = find_reversals_dir_first
 
 
-def ball_detections(ml, frame, conf_min: float) -> list[dict]:
+class BallModel:
+    """Core ML 球偵測器 + 其輸出格式。支援教授的兩種匯出:
+
+    - yolo:   YOLO26 end2end, 單一 [1,N,6] = x1,y1,x2,y2,conf,cls (輸入像素座標)
+    - rfdetr: RF-DETR, pred_boxes [1,Q,4] 正規化 cxcywh + pred_logits [1,Q,C]
+              (無 NMS; 分數取各類別 sigmoid 最大值, 與 PingPongBallDetector.swift 相同)
+
+    格式與輸入邊長由模型本身判斷 (輸出名稱 / input spec), 不需手動指定。
+    """
+
+    def __init__(self, path: str | Path):
+        import coremltools as ct
+        spec = ct.models.MLModel(str(path), skip_model_load=True).get_spec()
+        outs = {o.name for o in spec.description.output}
+        self.arch = "rfdetr" if "pred_boxes" in outs else "yolo"
+        self.imgsz = int(spec.description.input[0].type.imageType.width)
+        # YOLO 匯出在 GPU 路徑會 crash (教授註解), 只能 CPU;
+        # RF-DETR 教授已驗證各 compute unit 皆可, 用 ALL 取得 ANE/GPU 速度。
+        cu = ct.ComputeUnit.ALL if self.arch == "rfdetr" else ct.ComputeUnit.CPU_ONLY
+        self.ml = ct.models.MLModel(str(path), compute_units=cu)
+        self.path = Path(path)
+
+    def __repr__(self) -> str:
+        return f"BallModel({self.path.name}, {self.arch} @ {self.imgsz})"
+
+
+def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
     """跑 Core ML 球偵測器,回傳原圖座標的候選點。"""
     from PIL import Image
     h, w = frame.shape[:2]
-    rgb = cv2.cvtColor(cv2.resize(frame, (BALL_INPUT, BALL_INPUT)), cv2.COLOR_BGR2RGB)
-    raw = ml.predict({"image": Image.fromarray(rgb)})
-    arr = np.asarray(next(iter(raw.values()))).reshape(-1, 6)
+    s = ball.imgsz
+    rgb = cv2.cvtColor(cv2.resize(frame, (s, s)), cv2.COLOR_BGR2RGB)
+    raw = ball.ml.predict({"image": Image.fromarray(rgb)})
     out = []
+    if ball.arch == "rfdetr":
+        boxes = np.asarray(raw["pred_boxes"]).reshape(-1, 4)
+        logits = np.asarray(raw["pred_logits"])
+        scores = (1 / (1 + np.exp(-logits.reshape(boxes.shape[0], -1)))).max(axis=1)
+        for (cx, cy, _bw, _bh), cf in zip(boxes[scores >= conf_min], scores[scores >= conf_min]):
+            out.append({"x": float(cx * w), "y": float(cy * h), "conf": float(cf)})
+        return out
+    arr = np.asarray(next(iter(raw.values()))).reshape(-1, 6)
     for x1, y1, x2, y2, cf, _cls in arr[arr[:, 4] >= conf_min]:
-        out.append({"x": float((x1 + x2) / 2 * w / BALL_INPUT),
-                    "y": float((y1 + y2) / 2 * h / BALL_INPUT),
+        out.append({"x": float((x1 + x2) / 2 * w / s),
+                    "y": float((y1 + y2) / 2 * h / s),
                     "conf": float(cf)})
     return out
 
@@ -115,6 +148,9 @@ def main() -> None:
     ap.add_argument("video")
     ap.add_argument("--prof-repo", default=str(PROJECT_ROOT / "external" / "PingPongTracker"), help="PingPongTracker repo 路徑")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--ball-model", default=None,
+                    help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"
+                         "YOLO / RF-DETR 格式自動判斷")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3, help="球偵測信心門檻")
@@ -137,9 +173,8 @@ def main() -> None:
     de = load_prof_module(repo)
     if not args.no_fix_debounce:
         patch_debounce(de)
-    import coremltools as ct
-    ball_model = ct.models.MLModel(str(repo / "Models" / "BallDetector.mlpackage"),
-                                   compute_units=ct.ComputeUnit.CPU_ONLY)
+    ball_model = BallModel(args.ball_model or repo / "Models" / "BallDetector.mlpackage")
+    print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)

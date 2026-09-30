@@ -29,7 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
-from scripts.landing_points import (BALL_INPUT, TABLE_W_CM, ball_detections,  # noqa: E402
+from scripts.landing_points import (TABLE_W_CM, BallModel, ball_detections,  # noqa: E402
                                     load_prof_module)
 
 STRIP_H = 22
@@ -60,6 +60,9 @@ def main() -> None:
     ap.add_argument("video")
     ap.add_argument("--prof-repo", default=str(PROJECT_ROOT / "external" / "PingPongTracker"))
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--ball-model", default=None,
+                    help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"
+                         "YOLO / RF-DETR 格式自動判斷")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3)
@@ -71,9 +74,8 @@ def main() -> None:
 
     repo = Path(args.prof_repo)
     de = load_prof_module(repo)
-    import coremltools as ct
-    ball_model = ct.models.MLModel(str(repo / "Models" / "BallDetector.mlpackage"),
-                                   compute_units=ct.ComputeUnit.CPU_ONLY)
+    ball_model = BallModel(args.ball_model or repo / "Models" / "BallDetector.mlpackage")
+    print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
