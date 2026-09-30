@@ -29,8 +29,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
-from scripts.landing_points import (TABLE_W_CM, BallModel, ball_detections,  # noqa: E402
-                                    load_prof_module)
+from scripts.landing_points import (DEFAULT_PROF_REPO, TABLE_W_CM, BallModel,  # noqa: E402
+                                    ball_detections, load_prof_module)
 
 STRIP_H = 22
 
@@ -58,7 +58,7 @@ def draw_strip(frame, history, now, window_sec):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("video")
-    ap.add_argument("--prof-repo", default=str(PROJECT_ROOT / "external" / "PingPongTracker"))
+    ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO))
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--ball-model", default=None,
                     help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"

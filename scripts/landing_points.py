@@ -33,6 +33,12 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# 教授 repo 的位置: 本專案作為子資料夾放在 PingPongTracker 內時 → 上一層;
+# 獨立 repo 時 → external/PingPongTracker (另行 clone)
+DEFAULT_PROF_REPO = (PROJECT_ROOT.parent
+                     if (PROJECT_ROOT.parent / "Tools" / "detect_events.py").exists()
+                     else PROJECT_ROOT / "external" / "PingPongTracker")
+
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
@@ -146,7 +152,7 @@ def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("video")
-    ap.add_argument("--prof-repo", default=str(PROJECT_ROOT / "external" / "PingPongTracker"), help="PingPongTracker repo 路徑")
+    ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO), help="PingPongTracker repo 路徑")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--ball-model", default=None,
                     help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"
