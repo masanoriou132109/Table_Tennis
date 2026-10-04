@@ -153,6 +153,8 @@ def main() -> None:
                     help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
     ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
                     help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
+    ap.add_argument("--clip", type=float, nargs=2, metavar=("START", "END"), default=None,
+                    help="只輸出這段 (秒)。前 5 秒先跑追蹤暖機但不輸出; 小視窗只顯示片段內的落點")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     parts = {p.strip() for p in args.parts.split(",") if p.strip()}
@@ -167,6 +169,13 @@ def main() -> None:
     bounces = [e for e in data["events"] if e.get("type") == "bounce"]
     video, fps = data["video"], data["fps"]
     start, dur = data["start"], data["dur"]
+    write_from = start
+    if args.clip:
+        # 追蹤器的持久先驗需要先看過完整桌面, 冷啟動會沒有框 → 提前 5 秒暖機
+        warm = max(start, args.clip[0] - 5.0)
+        dur = min(start + dur, args.clip[1]) - warm
+        start, write_from = warm, args.clip[0]
+        bounces = [e for e in bounces if args.clip[0] <= e["t"] <= args.clip[1]]
     # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
     track_by_frame = {p["frame"]: p for p in data.get("track", [])}
 
@@ -256,7 +265,8 @@ def main() -> None:
             draw_track_strip(frame, history, now, args.window, strip_right)
         if "map" in parts:
             draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)
-        writer.write(frame)
+        if now >= write_from:
+            writer.write(frame)
 
     writer.release()
     cap.release()
