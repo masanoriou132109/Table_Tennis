@@ -3,8 +3,8 @@
 
 串接方式 (完全不修改教授的程式碼):
   1. 本專案 TableKeypointNet + TableTracker → 每幀桌面 4 角 → 每幀 homography
-  2. 教授的球偵測 Core ML (預設 YOLO26 Models/BallDetector.mlpackage;
-     --ball-model 可換成 RF-DETR 匯出, 格式自動判斷) → 每幀球偵測
+  2. 教授的球偵測 Core ML (預設 RF-DETR Large, Models/BallDetector_rfdetr_20260930.mlpackage;
+     --ball-model 可換回 YOLO26 等其他匯出, 格式自動判斷) → 每幀球偵測
   3. 教授 Tools/detect_events.py 的 build_track / detect_events (傳 H=None)
   4. 落點事件用「該事件時刻的那一幀」的 H 映射成桌面座標與分區
 
@@ -38,6 +38,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 DEFAULT_PROF_REPO = (PROJECT_ROOT.parent
                      if (PROJECT_ROOT.parent / "Tools" / "detect_events.py").exists()
                      else PROJECT_ROOT / "external" / "PingPongTracker")
+
+# 預設球偵測模型: 教授 2026-09-30 提供的 RF-DETR Large (教授指定改用新模型)。
+# .mlpackage 不在 git 內, 需先用 scripts/export_ball_rfdetr.py 轉出。
+# 舊的 YOLO26 仍可用 --ball-model <教授 repo>/Models/BallDetector.mlpackage 指定。
+DEFAULT_BALL_MODEL = PROJECT_ROOT / "Models" / "BallDetector_rfdetr_20260930.mlpackage"
 
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
@@ -110,8 +115,17 @@ class BallModel:
     格式與輸入邊長由模型本身判斷 (輸出名稱 / input spec), 不需手動指定。
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path | None = None):
         import coremltools as ct
+        path = Path(path) if path else DEFAULT_BALL_MODEL
+        if not path.exists():
+            raise SystemExit(
+                f"找不到球偵測模型 {path}\n"
+                "請先轉出 RF-DETR 模型:\n"
+                "  ~/Developer/tt-export-venv311/bin/python scripts/export_ball_rfdetr.py "
+                "checkpoints/ball/pingpong20260930_rfdetr.pt --model-class RFDETRLarge "
+                f"--out {DEFAULT_BALL_MODEL.relative_to(PROJECT_ROOT)}\n"
+                "或用 --ball-model 指定其他模型 (例如教授 repo 的 Models/BallDetector.mlpackage)")
         spec = ct.models.MLModel(str(path), skip_model_load=True).get_spec()
         outs = {o.name for o in spec.description.output}
         self.arch = "rfdetr" if "pred_boxes" in outs else "yolo"
@@ -155,8 +169,8 @@ def main() -> None:
     ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO), help="PingPongTracker repo 路徑")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--ball-model", default=None,
-                    help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"
-                         "YOLO / RF-DETR 格式自動判斷")
+                    help="球偵測 .mlpackage (預設: Models/BallDetector_rfdetr_20260930.mlpackage, "
+                         "RF-DETR Large)。YOLO / RF-DETR 格式自動判斷")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3, help="球偵測信心門檻")
@@ -179,7 +193,7 @@ def main() -> None:
     de = load_prof_module(repo)
     if not args.no_fix_debounce:
         patch_debounce(de)
-    ball_model = BallModel(args.ball_model or repo / "Models" / "BallDetector.mlpackage")
+    ball_model = BallModel(args.ball_model)
     print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")

@@ -61,8 +61,8 @@ def main() -> None:
     ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO))
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
     ap.add_argument("--ball-model", default=None,
-                    help="球偵測 .mlpackage (預設: 教授 repo 的 Models/BallDetector.mlpackage)。"
-                         "YOLO / RF-DETR 格式自動判斷")
+                    help="球偵測 .mlpackage (預設: Models/BallDetector_rfdetr_20260930.mlpackage, "
+                         "RF-DETR Large)。YOLO / RF-DETR 格式自動判斷")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--dur", type=float, default=40.0)
     ap.add_argument("--conf", type=float, default=0.3)
@@ -74,7 +74,7 @@ def main() -> None:
 
     repo = Path(args.prof_repo)
     de = load_prof_module(repo)
-    ball_model = BallModel(args.ball_model or repo / "Models" / "BallDetector.mlpackage")
+    ball_model = BallModel(args.ball_model)
     print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
