@@ -140,6 +140,43 @@ class BallModel:
         return f"BallModel({self.path.name}, {self.arch} @ {self.imgsz})"
 
 
+DRIBBLE_MAX_DT = 0.6      # s
+DRIBBLE_MAX_DIST = 50.0   # cm (桌面座標)
+
+
+def mark_net_dribbles(events: list[dict], max_dt: float = DRIBBLE_MAX_DT,
+                      max_dist: float = DRIBBLE_MAX_DIST) -> int:
+    """標記觸網後在桌上連續彈跳的「多餘落點」(ev["net_dribble"]=True), 不刪除。
+
+    條件 (全部成立才標): 與前一個落點同一側 AND 桌面距離 <= max_dist AND
+    時間差 <= max_dt AND 兩者之間沒有擊球。保留第一跳, 只標後續的跳。
+
+    為何用 AND 而非 OR: 發球的兩跳時間差 (實測 0.38~0.42s) 和一般回球幾乎一樣短,
+    只看時間會把發球第二跳誤刪; 網前短球的兩個落點距離可能很短但分在網子兩側。
+    「中間有擊球就不標」是為了漏偵測: 中間漏掉一跳時, 前後兩個真落點也會變成同側。
+    比對對象是前一個「偵測到的」落點 (不論是否已被標), 所以連彈三下會一路串起來。
+    回傳標記數。
+    """
+    net_x = TABLE_W_CM / 2
+    prev = None
+    n = 0
+    for ev in sorted(events, key=lambda e: e["t"]):
+        if ev.get("type") == "hit":
+            prev = None
+            continue
+        if ev.get("type") != "bounce":
+            continue
+        ev.pop("net_dribble", None)
+        tb, ptb = ev.get("table"), prev.get("table") if prev else None
+        if tb and ptb and (tb[0] < net_x) == (ptb[0] < net_x) \
+                and ev["t"] - prev["t"] <= max_dt \
+                and float(np.hypot(tb[0] - ptb[0], tb[1] - ptb[1])) <= max_dist:
+            ev["net_dribble"] = True
+            n += 1
+        prev = ev
+    return n
+
+
 def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
     """跑 Core ML 球偵測器,回傳原圖座標的候選點。"""
     from PIL import Image
@@ -184,6 +221,10 @@ def main() -> None:
                          "同樣的物理反彈像素速度小 4~5 倍,固定 px 門檻會誤殺真實落點")
     ap.add_argument("--min-y-speed", type=float, default=None,
                     help="直接指定 y 速度底限 (px/s),覆蓋 --min-y-speed-frac")
+    ap.add_argument("--dribble-max-dt", type=float, default=DRIBBLE_MAX_DT,
+                    help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
+    ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
+                    help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
     ap.add_argument("--no-fix-debounce", action="store_true",
                     help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -290,6 +331,7 @@ def main() -> None:
         ev["table"] = [round(tx, 1), round(ty, 1)]
         ev["zone"] = de.zone_of(tx, ty)
         n_mapped += 1
+    n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"
@@ -306,12 +348,13 @@ def main() -> None:
     hits = [e for e in events if e.get("type") == "hit"]
     print(f"影格 {len(frames)}  有桌面 {n_table} ({n_table/max(len(frames),1):.0%})  "
           f"球軌跡點 {len(track)}")
-    print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標)")
+    print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標, "
+          f"{n_dribble} 個標為觸網連續彈跳)")
     for e in bounces[:12]:
         z = e.get("zone")
         tb = e.get("table")
         print(f"  t={e['t']:.2f}s  影像({e['x']:.0f},{e['y']:.0f})  "
-              f"桌面{tb}  分區 {z}")
+              f"桌面{tb}  分區 {z}" + ("  [觸網彈跳]" if e.get("net_dribble") else ""))
     print(f"\n輸出 {out_path}")
 
 

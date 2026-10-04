@@ -34,6 +34,10 @@ from src.edge_refine import refine_quad  # noqa: E402
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
+from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
+                                    mark_net_dribbles)
+
+DRIBBLE_COLOR = (255, 0, 255)      # 觸網連續彈跳: 洋紅 (不計入落點)
 
 TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
 FLASH_SEC = 1.2                    # 新落點閃爍持續秒數
@@ -89,12 +93,16 @@ def draw_minimap(canvas, bounces, now, origin):
     cv2.putText(canvas, "NEAR", (tx0 + 3, ty0 + th - 5), cv2.FONT_HERSHEY_SIMPLEX,
                 0.35, (180, 180, 180), 1, cv2.LINE_AA)
 
+    dribbles = [e for e in bounces if e.get("net_dribble")]
+    bounces = [e for e in bounces if not e.get("net_dribble")]
     on_table = [e for e in bounces if e.get("zone")]
     off_table = [e for e in bounces if e.get("table") and not e.get("zone")]
     unmapped = [e for e in bounces if not e.get("table")]
     label = f"BOUNCES  {len(on_table)}"
     if off_table or unmapped:
         label += f"   (off {len(off_table)} / unmap {len(unmapped)})"
+    if dribbles:
+        label += f"   (net {len(dribbles)})"
 
     flash = None
     for e in on_table:
@@ -113,9 +121,19 @@ def draw_minimap(canvas, bounces, now, origin):
     for e in off_table + unmapped:  # 可疑事件也要讓使用者看到,不靜默丟棄
         if 0 <= now - e["t"] < FLASH_SEC:
             flash = "BOUNCE  OFF-TABLE (suspect)" if e.get("table") else "BOUNCE  UNMAPPED (no table)"
+    for e in dribbles:  # 觸網連續彈跳: 空心洋紅, 不計入落點, 但仍顯示供肉眼確認
+        if not e.get("table"):
+            continue
+        px = tx0 + int(e["table"][0] * MAP_SCALE)
+        py = ty0 + th - int(e["table"][1] * MAP_SCALE)
+        fresh = 0 <= now - e["t"] < FLASH_SEC
+        cv2.circle(canvas, (px, py), 7 if fresh else 4, DRIBBLE_COLOR, 2 if fresh else 1)
+        if fresh:
+            flash = "NET DRIBBLE (not counted)"
 
     color = (0, 255, 255) if flash and "zone" in flash else \
-            ((40, 170, 255) if flash else (220, 220, 220))
+            (DRIBBLE_COLOR if flash and "NET" in flash else
+             ((40, 170, 255) if flash else (220, 220, 220)))
     cv2.putText(canvas, flash or label, (tx0, oy + PAD + 12),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
@@ -131,11 +149,19 @@ def main() -> None:
                     help="小視窗位置: br=右下 tr=右上 bl=左下 tl=左上")
     ap.add_argument("--edge-alpha", type=float, default=0.3,
                     help="edge 精修結果的 EMA 係數 (與出貨用的 infer_video 一致)")
+    ap.add_argument("--dribble-max-dt", type=float, default=DRIBBLE_MAX_DT,
+                    help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
+    ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
+                    help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     parts = {p.strip() for p in args.parts.split(",") if p.strip()}
 
     data = json.loads(Path(args.json_path).read_text())
+    # 渲染時重新判定 (舊 JSON 也適用, 調門檻不必重跑球偵測)
+    n_dribble = mark_net_dribbles(data["events"], args.dribble_max_dt, args.dribble_max_dist)
+    print(f"觸網連續彈跳: {n_dribble} 個 "
+          f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側, 中間無擊球)")
     # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
     # 先前只取有 table 的,導致未映射的落點在 demo 中完全消失。
     bounces = [e for e in data["events"] if e.get("type") == "bounce"]
@@ -209,7 +235,9 @@ def main() -> None:
             age = now - e["t"]
             if not (0 <= age < FLASH_SEC):
                 continue
-            if e.get("zone"):
+            if e.get("net_dribble"):
+                col, tag = DRIBBLE_COLOR, "NET DRIBBLE"  # 觸網連續彈跳: 洋紅 (不計入)
+            elif e.get("zone"):
                 col, tag = (0, 255, 255), None          # 桌上: 黃
             elif e.get("table"):
                 col, tag = (40, 170, 255), "OFF-TABLE"  # 桌外: 橘 (疑似擊球誤判)
