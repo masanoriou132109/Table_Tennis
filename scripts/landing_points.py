@@ -141,15 +141,21 @@ class BallModel:
 
 
 DRIBBLE_MAX_DT = 0.6      # s
-DRIBBLE_MAX_DIST = 50.0   # cm (桌面座標)
+DRIBBLE_MAX_DIST = 60.0   # cm (桌面座標)
+DRIBBLE_NET_TOL = 10.0    # cm: 前一跳離網子這麼近 → 視為「碰網」, 不檢查同側
 
 
 def mark_net_dribbles(events: list[dict], max_dt: float = DRIBBLE_MAX_DT,
-                      max_dist: float = DRIBBLE_MAX_DIST) -> int:
+                      max_dist: float = DRIBBLE_MAX_DIST,
+                      net_tol: float = DRIBBLE_NET_TOL) -> int:
     """標記觸網後在桌上連續彈跳的「多餘落點」(ev["net_dribble"]=True), 不刪除。
 
     條件 (全部成立才標): 與前一個落點同一側 AND 桌面距離 <= max_dist AND
     時間差 <= max_dt AND 兩者之間沒有擊球。保留第一跳, 只標後續的跳。
+
+    同側的例外: 前一跳離網子 <= net_tol 時不檢查同側。那一下通常是球碰網被當成反彈
+    (webm t=97.32, x=135.4cm), 它落在網子哪一側只是 1~2cm 的誤差, 而碰網後的下一跳
+    不論掉回擊球方或過網, 都是「第二彈」不該算 (t=97.72, 距 56cm 在另一側)。
 
     為何用 AND 而非 OR: 發球的兩跳時間差 (實測 0.38~0.42s) 和一般回球幾乎一樣短,
     只看時間會把發球第二跳誤刪; 網前短球的兩個落點距離可能很短但分在網子兩側。
@@ -168,7 +174,8 @@ def mark_net_dribbles(events: list[dict], max_dt: float = DRIBBLE_MAX_DT,
             continue
         ev.pop("net_dribble", None)
         tb, ptb = ev.get("table"), prev.get("table") if prev else None
-        if tb and ptb and (tb[0] < net_x) == (ptb[0] < net_x) \
+        if tb and ptb and ((tb[0] < net_x) == (ptb[0] < net_x)
+                           or abs(ptb[0] - net_x) <= net_tol) \
                 and ev["t"] - prev["t"] <= max_dt \
                 and float(np.hypot(tb[0] - ptb[0], tb[1] - ptb[1])) <= max_dist:
             ev["net_dribble"] = True
@@ -225,6 +232,8 @@ def main() -> None:
                     help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
     ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
                     help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
+    ap.add_argument("--dribble-net-tol", type=float, default=DRIBBLE_NET_TOL,
+                    help="觸網連續彈跳: 前一跳離網子 <= 此距離 (cm) 時不檢查同側")
     ap.add_argument("--no-fix-debounce", action="store_true",
                     help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -331,7 +340,8 @@ def main() -> None:
         ev["table"] = [round(tx, 1), round(ty, 1)]
         ev["zone"] = de.zone_of(tx, ty)
         n_mapped += 1
-    n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist)
+    n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist,
+                                  args.dribble_net_tol)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"

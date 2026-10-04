@@ -35,7 +35,7 @@ from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    mark_net_dribbles)
+                                    DRIBBLE_NET_TOL, mark_net_dribbles)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 觸網連續彈跳: 洋紅 (不計入落點)
 
@@ -153,6 +153,8 @@ def main() -> None:
                     help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
     ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
                     help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
+    ap.add_argument("--dribble-net-tol", type=float, default=DRIBBLE_NET_TOL,
+                    help="觸網連續彈跳: 前一跳離網子 <= 此距離 (cm) 時不檢查同側")
     ap.add_argument("--clip", type=float, nargs=2, metavar=("START", "END"), default=None,
                     help="只輸出這段 (秒)。前 5 秒先跑追蹤暖機但不輸出; 小視窗只顯示片段內的落點")
     ap.add_argument("--out", default=None)
@@ -161,9 +163,10 @@ def main() -> None:
 
     data = json.loads(Path(args.json_path).read_text())
     # 渲染時重新判定 (舊 JSON 也適用, 調門檻不必重跑球偵測)
-    n_dribble = mark_net_dribbles(data["events"], args.dribble_max_dt, args.dribble_max_dist)
+    n_dribble = mark_net_dribbles(data["events"], args.dribble_max_dt, args.dribble_max_dist,
+                                  args.dribble_net_tol)
     print(f"觸網連續彈跳: {n_dribble} 個 "
-          f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側, 中間無擊球)")
+          f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側或前跳離網<={args.dribble_net_tol}cm, 中間無擊球)")
     # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
     # 先前只取有 table 的,導致未映射的落點在 demo 中完全消失。
     bounces = [e for e in data["events"] if e.get("type") == "bounce"]
