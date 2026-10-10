@@ -10,6 +10,7 @@ ResNet18 backbone (stride 32) -> 3 層反卷積 (stride 4) -> 4 通道角點 hea
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -62,23 +63,24 @@ def decode_heatmaps(heatmaps: torch.Tensor, window: int = 2) -> tuple[torch.Tens
     """
     b, c, hh, wh = heatmaps.shape
     probs = torch.sigmoid(heatmaps)
-    flat = probs.reshape(b, c, -1)
-    scores, idx = flat.max(dim=2)
-    ys = (idx // wh).float()
-    xs = (idx % wh).float()
+    scores, idx = probs.reshape(b, c, -1).max(dim=2)
 
-    coords = torch.empty(b, c, 2, device=heatmaps.device)
-    for bi in range(b):
-        for ci in range(c):
-            px, py = int(xs[bi, ci]), int(ys[bi, ci])
-            x0, x1 = max(px - window, 0), min(px + window + 1, wh)
-            y0, y1 = max(py - window, 0), min(py + window + 1, hh)
-            patch = probs[bi, ci, y0:y1, x0:x1]
-            total = patch.sum()
-            gx = torch.arange(x0, x1, device=patch.device, dtype=torch.float32)
-            gy = torch.arange(y0, y1, device=patch.device, dtype=torch.float32)
-            coords[bi, ci, 0] = (patch.sum(0) * gx).sum() / total
-            coords[bi, ci, 1] = (patch.sum(1) * gy).sum() / total
+    # 一次搬到 CPU 用 numpy 向量化計算。舊版逐角在 GPU 上取 int(), 每次都強制同步,
+    # 光解碼就佔每幀約 12ms (模型本身約 5ms)。
+    # 邊界處理與舊版相同: 補 0 等同把超出邊界的鄰域截掉 (0 不貢獻權重)。
+    p = np.pad(probs.detach().float().cpu().numpy(),
+               ((0, 0), (0, 0), (window, window), (window, window)))
+    ix = idx.cpu().numpy()
+    ys, xs = ix // wh, ix % wh                            # [B, C]
+    offs = np.arange(-window, window + 1)
+    rows = (ys[..., None] + offs + window)[..., :, None]  # [B, C, K, 1]
+    cols = (xs[..., None] + offs + window)[..., None, :]  # [B, C, 1, K]
+    patch = p[np.arange(b)[:, None, None, None], np.arange(c)[None, :, None, None],
+              rows, cols]                                 # [B, C, K, K]
+    total = patch.sum(axis=(2, 3))
+    cx = (patch.sum(axis=2) * (xs[..., None] + offs)).sum(-1) / total
+    cy = (patch.sum(axis=3) * (ys[..., None] + offs)).sum(-1) / total
+    coords = torch.from_numpy(np.stack([cx, cy], -1).astype(np.float32)).to(heatmaps.device)
     coords = coords * HEATMAP_STRIDE + HEATMAP_STRIDE / 2
     return coords, scores
 
