@@ -36,9 +36,13 @@ from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noq
                           fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, mark_net_dribbles, mark_serves)
+                                    DRIBBLE_NET_TOL, classify_bounces, mark_net_dribbles,
+                                    mark_serves)
 
-DRIBBLE_COLOR = (255, 0, 255)      # 觸網連續彈跳: 洋紅 (不計入落點)
+DRIBBLE_COLOR = (255, 0, 255)      # 不算的落點: 洋紅 (不計入落點)
+# classify_bounces 的原因 → 畫面標籤
+UNCOUNTED_TAG = {"own_side": "OWN SIDE", "second_bounce": "2ND BOUNCE", "net_edge": "NET EDGE",
+                 "dead_ball": "DEAD BALL", "net_dribble": "NET DRIBBLE"}
 
 # 以下 UI 尺寸以 720p 設計, 繪製時經 s()/fs()/lw() 放大到 1080p 輸出
 TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
@@ -104,8 +108,8 @@ def draw_minimap(canvas, bounces, now, origin):
     # 發球第 1 跳落在發球方自己那側, 不是這一拍的落點 → 小視窗不顯示也不計數
     # (主畫面仍標 SERVE 1 供肉眼確認)
     bounces = [e for e in bounces if e.get("serve") != 1]
-    dribbles = [e for e in bounces if e.get("net_dribble")]
-    bounces = [e for e in bounces if not e.get("net_dribble")]
+    dribbles = [e for e in bounces if e.get("uncounted")]
+    bounces = [e for e in bounces if not e.get("uncounted")]
     on_table = [e for e in bounces if e.get("zone")]
     off_table = [e for e in bounces if e.get("table") and not e.get("zone")]
     unmapped = [e for e in bounces if not e.get("table")]
@@ -113,7 +117,7 @@ def draw_minimap(canvas, bounces, now, origin):
     if off_table or unmapped:
         label += f"   (off {len(off_table)} / unmap {len(unmapped)})"
     if dribbles:
-        label += f"   (net {len(dribbles)})"
+        label += f"   (not counted {len(dribbles)})"
 
     flash = None
     for e in on_table:
@@ -139,10 +143,10 @@ def draw_minimap(canvas, bounces, now, origin):
         cv2.circle(canvas, (px, py), s(7 if fresh else 4), DRIBBLE_COLOR,
                    lw(2 if fresh else 1), cv2.LINE_AA)
         if fresh:
-            flash = "NET DRIBBLE (not counted)"
+            flash = f"{UNCOUNTED_TAG[e['uncounted']]} (not counted)"
 
     color = (0, 255, 255) if flash and "zone" in flash else \
-            (DRIBBLE_COLOR if flash and "NET" in flash else
+            (DRIBBLE_COLOR if flash and "not counted" in flash else
              ((40, 170, 255) if flash else (220, 220, 220)))
     cv2.putText(canvas, flash or label, (tx0, oy + s(PAD) + s(12)),
                 FONT, fs(0.5), color, lw(2), cv2.LINE_AA)
@@ -181,6 +185,10 @@ def main() -> None:
           f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側或前跳離網<={args.dribble_net_tol}cm, 中間無擊球)")
     n_serve = mark_serves(data["events"])
     print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
+    n_unc = classify_bounces(data["events"])
+    print(f"不算的落點: {n_unc} 個" + ("" if any(e.get("type") == "hit" and e.get("table")
+                                            for e in data["events"])
+                                   else "  (此 JSON 的擊球沒有桌面座標, 只能用觸網連彈規則; 請重跑 landing_points)"))
     # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
     # 先前只取有 table 的,導致未映射的落點在 demo 中完全消失。
     bounces = [e for e in data["events"] if e.get("type") == "bounce"]
@@ -267,15 +275,15 @@ def main() -> None:
             age = now - e["t"]
             if not (0 <= age < FLASH_SEC):
                 continue
-            if e.get("net_dribble"):
-                col, tag = DRIBBLE_COLOR, "NET DRIBBLE"  # 觸網連續彈跳: 洋紅 (不計入)
+            if e.get("uncounted"):
+                col, tag = DRIBBLE_COLOR, UNCOUNTED_TAG[e["uncounted"]]  # 不算: 洋紅
             elif e.get("zone"):
                 col, tag = (0, 255, 255), None          # 桌上: 黃
             elif e.get("table"):
                 col, tag = (40, 170, 255), "OFF-TABLE"  # 桌外: 橘 (疑似擊球誤判)
             else:
                 col, tag = (160, 160, 160), "UNMAPPED"  # 無桌面資訊: 灰
-            if e.get("serve") and not e.get("net_dribble"):
+            if e.get("serve") and not e.get("uncounted"):
                 tag = f"SERVE {e['serve']}" + (f" {tag}" if tag else "")
             x, y = e["x"], e["y"]
             r = 14 + 26 * (age / FLASH_SEC)

@@ -204,6 +204,9 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
     第 2 跳誤標成第 1 跳。改看配對: 下一個落點在 pair_dt 內、位於網子另一側、距離
     >= pair_dist、且中間沒有擊球 → 兩跳都抓到, 標 1 和 2。配對不成立 → "?"
     (可能只抓到第 2 跳, 也可能是第 1 跳後軌跡斷了), 不硬判。
+
+    只看「落在桌面上」的落點 (有分區): 地板 logo / 白鞋被誤認成球時, 鏡頭移動會讓它們
+    形成桌外假落點; 若參與判斷, 會被當成發球第 1 跳, 或讓真正的回合開始時間錯位。
     回傳各類數量。
     """
     net_x = TABLE_W_CM / 2
@@ -213,7 +216,7 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
     counts = {1: 0, 2: 0, "?": 0}
     prev_bounce_t = None
     for i, e in enumerate(evs):
-        if e.get("type") != "bounce":
+        if e.get("type") != "bounce" or not e.get("zone"):
             continue
         is_start = prev_bounce_t is None or e["t"] - prev_bounce_t > gap
         prev_bounce_t = e["t"]
@@ -223,11 +226,11 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
         for f in evs[i + 1:]:
             if f.get("type") == "hit":
                 hit_between = True
-            elif f.get("type") == "bounce":
+            elif f.get("type") == "bounce" and f.get("zone"):
                 nxt = f
                 break
-        a, b = e.get("table"), nxt.get("table") if nxt else None
-        if (a and b and not hit_between
+        a, b = e["table"], nxt["table"] if nxt else None
+        if (b and not hit_between
                 and nxt["t"] - e["t"] <= pair_dt
                 and (a[0] < net_x) != (b[0] < net_x)
                 and float(np.hypot(a[0] - b[0], a[1] - b[1])) >= pair_dist):
@@ -238,6 +241,75 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
             e["serve"] = "?"
             counts["?"] += 1
     return counts
+
+
+NET_EDGE_CM = 12.0     # 離網 <= 此距離的落點: 分不出碰網/落桌, 也分不出哪一側
+NET_HIT_CM = 25.0      # 離網 <= 此距離的「擊球」: 是球碰網造成的方向反轉, 不是球員擊球
+
+
+def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
+                     net_edge: float = NET_EDGE_CM, net_hit: float = NET_HIT_CM) -> int:
+    """以擊球為基準判定哪些落點不算 (ev["uncounted"] = 原因), 不刪除。需先跑 mark_serves。
+
+    規則: 兩次擊球之間, 只有「落在對方那側的第一跳」算落點。
+      own_side      落在擊球方自己那側 (掛網沒過、過網後倒旋回來)        → 死球
+      second_bounce 對方那側的第二跳以後 (觸網後連彈)                     → 死球
+      net_edge      離網 <= net_edge: 碰網或網邊落桌無法區分, 不佔「第一跳」
+      dead_ball     死球後到下一回合開始前的落點 (球員拍球、撿球、球在滾)
+      net_dribble   沒偵測到擊球、不知道擊球方時, 退回 mark_net_dribbles 的判斷
+    發球第 1 跳例外 (本來就落在發球方), 並以它決定發球方。
+    擊球位置在網邊 (<= net_hit) 視為碰網, 不更新擊球方。只考慮桌面上的落點 (有分區)。
+
+    依據 (London 2026): 09:47 / 10:07 / 10:25 三次掛網都是「擊球後第一跳落在擊球方」,
+    其中 10:07 掛網後彈到近端線才落下 → 不能用離網距離判斷掛網;
+    18:00 碰網那下 (離網 8cm) 被當成落點, 真正的第一跳 (離網 15cm) 反而被當連彈。
+    回傳不算的落點數。
+    """
+    net_x = TABLE_W_CM / 2
+    hitter = None          # "L" / "R": 最近一次球員擊球在哪一側
+    counted = False        # 這一拍是否已有有效落點
+    dead = False
+    prev_t = None
+    n = 0
+    for e in sorted(events, key=lambda e: e["t"]):
+        if e.get("type") == "hit":
+            tb = e.get("table")
+            e.pop("net_touch", None)
+            if not tb:
+                continue
+            if abs(tb[0] - net_x) <= net_hit:
+                e["net_touch"] = True
+                continue
+            if not dead:
+                hitter, counted = ("L" if tb[0] < net_x else "R"), False
+            continue
+        if e.get("type") != "bounce":
+            continue
+        e.pop("uncounted", None)
+        if not e.get("zone"):
+            continue                       # 桌外落點另外顯示, 不影響回合狀態
+        if prev_t is None or e["t"] - prev_t > gap:
+            hitter, counted, dead = None, False, False   # 新回合
+        prev_t = e["t"]
+        side = "L" if e["table"][0] < net_x else "R"
+        if e.get("serve") == 1:
+            hitter, counted = side, False
+            continue
+        if dead:
+            e["uncounted"] = "dead_ball"
+        elif abs(e["table"][0] - net_x) <= net_edge:
+            e["uncounted"] = "net_edge"
+        elif hitter is None:
+            if e.get("net_dribble"):
+                e["uncounted"] = "net_dribble"
+        elif side == hitter:
+            e["uncounted"], dead = "own_side", True
+        elif counted:
+            e["uncounted"], dead = "second_bounce", True
+        else:
+            counted = True
+        n += "uncounted" in e
+    return n
 
 
 APRON_TOP = -0.05       # 裙板遮罩上緣: 近端邊線上方 5% 桌高 (補角誤差餘裕)
@@ -443,18 +515,20 @@ def main() -> None:
 
     n_mapped = 0
     for ev in events:
-        if ev.get("type") != "bounce":
-            continue
+        # 擊球也映射: classify_bounces 需要知道擊球方在網子哪一側。
+        # 擊球點在桌面上方 (不在桌面平面), 映射座標只用來分左右, 不代表實際位置。
         H = nearest_H(ev["t"])
         if H is None:
             continue
         tx, ty = de.map_point(H, ev["x"], ev["y"])
         ev["table"] = [round(tx, 1), round(ty, 1)]
-        ev["zone"] = de.zone_of(tx, ty)
-        n_mapped += 1
+        if ev.get("type") == "bounce":
+            ev["zone"] = de.zone_of(tx, ty)
+            n_mapped += 1
     n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist,
                                   args.dribble_net_tol)
     n_serve = mark_serves(events)
+    n_uncounted = classify_bounces(events)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"
@@ -476,12 +550,14 @@ def main() -> None:
     print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標, "
           f"{n_dribble} 個標為觸網連續彈跳)")
     print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
+    print(f"不算的落點 (掛網/過網彈回/連彈/網邊/死球): {n_uncounted} 個")
     for e in bounces[:12]:
         z = e.get("zone")
         tb = e.get("table")
         print(f"  t={e['t']:.2f}s  影像({e['x']:.0f},{e['y']:.0f})  "
               f"桌面{tb}  分區 {z}" + ("  [觸網彈跳]" if e.get("net_dribble") else "")
-              + (f"  [發球 {e['serve']}]" if e.get("serve") else ""))
+              + (f"  [發球 {e['serve']}]" if e.get("serve") else "")
+              + (f"  [不算: {e['uncounted']}]" if e.get("uncounted") else ""))
     print(f"\n輸出 {out_path}")
 
 
