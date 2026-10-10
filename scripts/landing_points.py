@@ -241,6 +241,38 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
     return counts
 
 
+APRON_TOP = -0.05       # 裙板遮罩上緣: 近端邊線上方 5% 桌高 (補角誤差餘裕)
+APRON_BOTTOM = 0.35     # 裙板遮罩下緣: 近端邊線下方 35% 桌高
+APRON_MAX_CONF = 0.6    # 只擋低於此信心的偵測
+
+
+def in_apron(quad: np.ndarray, x: float, y: float, conf: float) -> bool:
+    """球偵測是否落在球桌前裙板 (近端邊線下方、桌子左右範圍內) 且信心低。
+
+    London 2026 的裙板上有白色 DHS logo, 球模型以 0.31~0.59 的信心把它認成球,
+    插進真實軌跡形成假落點 (t=54.38/56.48/59.40)。真球出現在這個區域時信心都 >=0.85,
+    且多半在桌子左右範圍之外 (飛出桌端)。
+
+    上緣放在邊線「上方」5%, 因為發球前桌角被擋、補角偏差時, logo 會被算在邊線上方
+    3~4%。只靠位置會與擦邊球 (球心約在邊線上方 1.3%) 重疊, 所以加上信心條件。
+    距離以桌面在畫面中的高度正規化, zoom 時不必調整。
+    """
+    if conf >= APRON_MAX_CONF:
+        return False
+    FL, FR, NR, NL = quad
+    edge = NR - NL
+    length = float(np.linalg.norm(edge))
+    u = edge / max(length, 1e-9)
+    n = np.array([-u[1], u[0]])
+    if n[1] < 0:            # 法向量取朝畫面下方
+        n = -n
+    table_h = (np.linalg.norm(NL - FL) + np.linalg.norm(NR - FR)) / 2
+    v = np.array([x, y]) - NL
+    below = float(v @ n) / max(table_h, 1e-9)
+    along = float(v @ u) / max(length, 1e-9)
+    return 0.0 <= along <= 1.0 and APRON_TOP <= below <= APRON_BOTTOM
+
+
 def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
     """跑 Core ML 球偵測器,回傳原圖座標的候選點。"""
     from PIL import Image
@@ -291,6 +323,8 @@ def main() -> None:
                     help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
     ap.add_argument("--dribble-net-tol", type=float, default=DRIBBLE_NET_TOL,
                     help="觸網連續彈跳: 前一跳離網子 <= 此距離 (cm) 時不檢查同側")
+    ap.add_argument("--no-apron-mask", action="store_true",
+                    help="停用球桌前裙板遮罩 (供對照)")
     ap.add_argument("--no-fix-debounce", action="store_true",
                     help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -325,6 +359,7 @@ def main() -> None:
     H_by_frame: dict[int, np.ndarray] = {}
     quads_px: list[np.ndarray] = []   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
     n_table = 0
+    quad_by_frame: dict[int, np.ndarray] = {}   # 供裙板遮罩
     for i in range(n_frames):
         ok, frame = cap.read()
         if not ok:
@@ -341,9 +376,27 @@ def main() -> None:
             quads_px.append(quad)
             n_table += 1
 
+        if quad is not None:
+            quad_by_frame[fi] = quad
         frames.append({"t": t, "frame": fi,
                        "dets": ball_detections(ball_model, frame, args.conf)})
     cap.release()
+
+    # 球桌前裙板遮罩。全部幀處理完再做, 才能往前「和往後」找最近的桌面框:
+    # 追蹤器要連續幾幀一致才確認桌面, 確認前那幾幀 (常是發球前) 沒有框, 只往前找會漏。
+    n_apron = 0
+    if not args.no_apron_mask and quad_by_frame:
+        qfs = np.array(sorted(quad_by_frame))
+        for fr in frames:
+            if not fr["dets"]:
+                continue
+            k = int(qfs[np.argmin(np.abs(qfs - fr["frame"]))])
+            if abs(k - fr["frame"]) > 10:
+                continue
+            kept = [d for d in fr["dets"]
+                    if not in_apron(quad_by_frame[k], d["x"], d["y"], d["conf"])]
+            n_apron += len(fr["dets"]) - len(kept)
+            fr["dets"] = kept
 
     # 逐幀桌面區域閘門 (取代他 build_track 內用固定 H 的那段)
     expand = args.zone_expand
@@ -414,13 +467,14 @@ def main() -> None:
          "zone_expand": expand, "conf": args.conf,
          "frames_with_table": n_table, "frames_total": len(frames),
          "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
+         "apron_masked": n_apron,
          "track_points": len(track), "track": track, "events": events},
         ensure_ascii=False, indent=2))
 
     bounces = [e for e in events if e.get("type") == "bounce"]
     hits = [e for e in events if e.get("type") == "hit"]
     print(f"影格 {len(frames)}  有桌面 {n_table} ({n_table/max(len(frames),1):.0%})  "
-          f"球軌跡點 {len(track)}")
+          f"球軌跡點 {len(track)}  裙板遮罩擋掉 {n_apron} 個偵測")
     print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標, "
           f"{n_dribble} 個標為觸網連續彈跳)")
     print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
