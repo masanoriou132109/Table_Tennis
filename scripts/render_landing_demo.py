@@ -33,65 +33,74 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.edge_refine import refine_quad  # noqa: E402
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
+from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
+                          fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
                                     DRIBBLE_NET_TOL, mark_net_dribbles, mark_serves)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 觸網連續彈跳: 洋紅 (不計入落點)
 
+# 以下 UI 尺寸以 720p 設計, 繪製時經 s()/fs()/lw() 放大到 1080p 輸出
 TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
 FLASH_SEC = 1.2                    # 新落點閃爍持續秒數
-MAP_SCALE = 1.1                    # cm → 小視窗像素
-PAD = 16                           # 小視窗內邊距
-STRIP_H = 20                       # 底部球軌跡時間軸高度
+MAP_SCALE = 1.1                    # cm → 小視窗像素 (720p)
+PAD = 16                           # 小視窗內邊距 (720p)
+STRIP_H = 20                       # 底部球軌跡時間軸高度 (720p)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
 def draw_track_strip(frame, history, now, window_sec, x_right):
-    """底部時間軸: 最近 window_sec 秒球軌跡是否有點 (綠=有, 暗紅=無)。"""
-    h = frame.shape[0]
-    x0, x1 = 20, x_right
-    y0 = h - STRIP_H - 18
-    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (35, 35, 35), -1)
+    """底部時間軸: 最近 window_sec 秒球軌跡是否有點 (綠=有, 暗紅=無)。x_right 為 720p 座標。"""
+    x0, x1 = s(20), s(x_right)
+    y0 = frame.shape[0] - s(STRIP_H + 18)
+    sh = s(STRIP_H)
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + sh), (35, 35, 35), -1)
     t_start = now - window_sec
     for t, present in history:
         if t < t_start:
             continue
         px = x0 + int((t - t_start) / window_sec * (x1 - x0))
-        cv2.line(frame, (px, y0 + 2), (px, y0 + STRIP_H - 2),
-                 (60, 200, 60) if present else (40, 40, 90), 2)
-    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (180, 180, 180), 1)
-    cv2.putText(frame, f"ball track  -{window_sec:.0f}s", (x0, y0 - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-    cv2.putText(frame, "now", (x1 - 32, y0 - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+        cv2.line(frame, (px, y0 + s(2)), (px, y0 + sh - s(2)),
+                 (60, 200, 60) if present else (40, 40, 90), lw(2))
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + sh), (180, 180, 180), lw(1))
+    cv2.putText(frame, f"ball track  -{window_sec:.0f}s", (x0, y0 - s(6)),
+                FONT, fs(0.45), (180, 180, 180), lw(1), cv2.LINE_AA)
+    cv2.putText(frame, "now", (x1 - s(32), y0 - s(6)),
+                FONT, fs(0.45), (180, 180, 180), lw(1), cv2.LINE_AA)
 
 
 def draw_minimap(canvas, bounces, now, origin):
-    """在 canvas 右下畫俯視桌面小視窗。bounces: 已發生的落點清單。"""
-    tw, th = int(TABLE_W * MAP_SCALE), int(TABLE_H * MAP_SCALE)
-    pw, ph = tw + PAD * 2, th + PAD * 2 + 22
-    ox, oy = origin
+    """在 canvas 畫俯視桌面小視窗。bounces: 已發生的落點清單。origin 為 720p 座標。"""
+    tw, th = s(TABLE_W * MAP_SCALE), s(TABLE_H * MAP_SCALE)
+    pw, ph = tw + s(PAD) * 2, th + s(PAD) * 2 + s(22)
+    ox, oy = pt(*origin)
 
     # 半透明底板
     panel = canvas[oy:oy + ph, ox:ox + pw]
     panel[:] = (panel * 0.25 + np.array([25, 25, 25]) * 0.75).astype(np.uint8)
-    cv2.rectangle(canvas, (ox, oy), (ox + pw, oy + ph), (200, 200, 200), 1)
+    cv2.rectangle(canvas, (ox, oy), (ox + pw, oy + ph), (200, 200, 200), lw(1))
 
-    tx0, ty0 = ox + PAD, oy + PAD + 22
+    tx0, ty0 = ox + s(PAD), oy + s(PAD) + s(22)
     cv2.rectangle(canvas, (tx0, ty0), (tx0 + tw, ty0 + th), (60, 95, 60), -1)
     for i in range(1, 3):  # 3x3 分區格線
         y = ty0 + int(th * i / 3)
-        cv2.line(canvas, (tx0, y), (tx0 + tw, y), (110, 110, 110), 1)
+        cv2.line(canvas, (tx0, y), (tx0 + tw, y), (110, 110, 110), lw(1))
     for half in (0, 1):
         for i in range(1, 3):
             x = tx0 + int(tw * (half * 3 + i) / 6)
-            cv2.line(canvas, (x, ty0), (x, ty0 + th), (110, 110, 110), 1)
-    cv2.rectangle(canvas, (tx0, ty0), (tx0 + tw, ty0 + th), (255, 255, 255), 1)
-    cv2.line(canvas, (tx0 + tw // 2, ty0), (tx0 + tw // 2, ty0 + th), (0, 200, 255), 2)
-    cv2.putText(canvas, "FAR", (tx0 + 3, ty0 + 12), cv2.FONT_HERSHEY_SIMPLEX,
-                0.35, (180, 180, 180), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "NEAR", (tx0 + 3, ty0 + th - 5), cv2.FONT_HERSHEY_SIMPLEX,
-                0.35, (180, 180, 180), 1, cv2.LINE_AA)
+            cv2.line(canvas, (x, ty0), (x, ty0 + th), (110, 110, 110), lw(1))
+    cv2.rectangle(canvas, (tx0, ty0), (tx0 + tw, ty0 + th), (255, 255, 255), lw(1))
+    cv2.line(canvas, (tx0 + tw // 2, ty0), (tx0 + tw // 2, ty0 + th), (0, 200, 255), lw(2))
+    cv2.putText(canvas, "FAR", (tx0 + s(3), ty0 + s(12)), FONT,
+                fs(0.35), (180, 180, 180), lw(1), cv2.LINE_AA)
+    cv2.putText(canvas, "NEAR", (tx0 + s(3), ty0 + th - s(5)), FONT,
+                fs(0.35), (180, 180, 180), lw(1), cv2.LINE_AA)
+
+    def map_xy(e):
+        # 垂直翻轉: 桌面座標 y=0 是近端,但影片中近端在畫面下方,翻轉後小視窗與影片同向
+        return (tx0 + int(e["table"][0] / TABLE_W * tw),
+                ty0 + th - int(e["table"][1] / TABLE_H * th))
 
     dribbles = [e for e in bounces if e.get("net_dribble")]
     bounces = [e for e in bounces if not e.get("net_dribble")]
@@ -106,37 +115,35 @@ def draw_minimap(canvas, bounces, now, origin):
 
     flash = None
     for e in on_table:
-        # 垂直翻轉: 桌面座標 y=0 是近端,但影片中近端在畫面下方,翻轉後小視窗與影片同向
-        px = tx0 + int(e["table"][0] * MAP_SCALE)
-        py = ty0 + th - int(e["table"][1] * MAP_SCALE)
+        px, py = map_xy(e)
         age = now - e["t"]
         if 0 <= age < FLASH_SEC:  # 新落點: 放大 + 擴散環
-            r = int(6 + 14 * (age / FLASH_SEC))
-            cv2.circle(canvas, (px, py), r, (0, 255, 255), 2)
-            cv2.circle(canvas, (px, py), 6, (0, 255, 255), -1)
+            r = s(6 + 14 * (age / FLASH_SEC))
+            cv2.circle(canvas, (px, py), r, (0, 255, 255), lw(2), cv2.LINE_AA)
+            cv2.circle(canvas, (px, py), s(6), (0, 255, 255), -1, cv2.LINE_AA)
             flash = (f"SERVE {e['serve']}  zone {e['zone']}" if e.get("serve")
                      else f"BOUNCE  zone {e['zone']}")
         else:                      # 歷史落點: 暗紅小點
-            cv2.circle(canvas, (px, py), 4, (90, 90, 230), -1)
-            cv2.circle(canvas, (px, py), 4, (220, 220, 220), 1)
+            cv2.circle(canvas, (px, py), s(4), (90, 90, 230), -1, cv2.LINE_AA)
+            cv2.circle(canvas, (px, py), s(4), (220, 220, 220), lw(1), cv2.LINE_AA)
     for e in off_table + unmapped:  # 可疑事件也要讓使用者看到,不靜默丟棄
         if 0 <= now - e["t"] < FLASH_SEC:
             flash = "BOUNCE  OFF-TABLE (suspect)" if e.get("table") else "BOUNCE  UNMAPPED (no table)"
     for e in dribbles:  # 觸網連續彈跳: 空心洋紅, 不計入落點, 但仍顯示供肉眼確認
         if not e.get("table"):
             continue
-        px = tx0 + int(e["table"][0] * MAP_SCALE)
-        py = ty0 + th - int(e["table"][1] * MAP_SCALE)
+        px, py = map_xy(e)
         fresh = 0 <= now - e["t"] < FLASH_SEC
-        cv2.circle(canvas, (px, py), 7 if fresh else 4, DRIBBLE_COLOR, 2 if fresh else 1)
+        cv2.circle(canvas, (px, py), s(7 if fresh else 4), DRIBBLE_COLOR,
+                   lw(2 if fresh else 1), cv2.LINE_AA)
         if fresh:
             flash = "NET DRIBBLE (not counted)"
 
     color = (0, 255, 255) if flash and "zone" in flash else \
             (DRIBBLE_COLOR if flash and "NET" in flash else
              ((40, 170, 255) if flash else (220, 220, 220)))
-    cv2.putText(canvas, flash or label, (tx0, oy + PAD + 12),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
+    cv2.putText(canvas, flash or label, (tx0, oy + s(PAD) + s(12)),
+                FONT, fs(0.5), color, lw(2), cv2.LINE_AA)
 
 
 def main() -> None:
@@ -192,16 +199,18 @@ def main() -> None:
     model.eval()
 
     cap = cv2.VideoCapture(video)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    check_aspect(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    # 偵測/追蹤在 1280x720 (與 JSON 座標一致), 畫面輸出 1080p
+    w, h = PROC_W, PROC_H
     start_f = int(start * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     tracker = TableTracker(w, h)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"demo_{Path(video).stem}.mp4"
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (OUT_W, OUT_H))
 
+    # 版面以 720p 座標規劃, 繪製時放大
     map_w = int(TABLE_W * MAP_SCALE) + PAD * 2
     map_h = int(TABLE_H * MAP_SCALE) + PAD * 2 + 22
     M = 20
@@ -213,11 +222,13 @@ def main() -> None:
     history: list[tuple[float, bool]] = []
     edge_state = None   # 精修結果的 EMA 狀態 (抑制逐幀抖動)
     for i in range(int(dur * fps)):
-        ok, frame = cap.read()
+        ok, raw = cap.read()
         if not ok:
             break
         fi = start_f + i
         now = fi / fps
+        frame = to_proc(raw)
+        canvas = to_out(raw) if now >= write_from else None   # 暖機期不需要畫
 
         coords, scores, presence = predict(model, frame, device, w, h)
         quad = tracker.update(coords, scores, presence)
@@ -230,20 +241,25 @@ def main() -> None:
                                         reference=tracker.smoother.reference)
             edge_state = refined if edge_state is None else \
                 (1 - args.edge_alpha) * edge_state + args.edge_alpha * refined
-            if "table" in parts:
-                cv2.polylines(frame, [edge_state.astype(np.int32)], True, (0, 255, 0), 2)
 
-        # 球 (軌跡點)
         bp = track_by_frame.get(fi)
         history.append((now, bp is not None))
+        if canvas is None:
+            continue
+
+        if "table" in parts and edge_state is not None:
+            cv2.polylines(canvas, [np.round(edge_state * UI).astype(np.int32)],
+                          True, (0, 255, 0), lw(2), cv2.LINE_AA)
+
+        # 球 (軌跡點)
         if "ball" in parts:
             if bp is not None:
-                cv2.circle(frame, (int(bp["x"]), int(bp["y"])), 15, (60, 220, 60), 2)
+                cv2.circle(canvas, pt(bp["x"], bp["y"]), s(15), (60, 220, 60), lw(2), cv2.LINE_AA)
             hud = f"BALL {bp['conf']:.2f}" if bp else "NO BALL"
-            cv2.putText(frame, hud, (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
-                        (60, 220, 60) if bp else (60, 60, 230), 2)
-        cv2.putText(frame, f"t={now:.2f}s", (25, 75), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6, (200, 200, 200), 1)
+            cv2.putText(canvas, hud, pt(25, 45), FONT, fs(0.9),
+                        (60, 220, 60) if bp else (60, 60, 230), lw(2), cv2.LINE_AA)
+        cv2.putText(canvas, f"t={now:.2f}s", pt(25, 75), FONT,
+                    fs(0.6), (200, 200, 200), lw(1), cv2.LINE_AA)
 
         # 主畫面: 閃爍中的落點位置 (依可信度上色)
         for e in (bounces if "bounce" in parts else []):
@@ -260,21 +276,19 @@ def main() -> None:
                 col, tag = (160, 160, 160), "UNMAPPED"  # 無桌面資訊: 灰
             if e.get("serve") and not e.get("net_dribble"):
                 tag = f"SERVE {e['serve']}" + (f" {tag}" if tag else "")
-            x, y = int(e["x"]), int(e["y"])
-            r = int(14 + 26 * (age / FLASH_SEC))
-            cv2.circle(frame, (x, y), r, col, 2)
-            cv2.circle(frame, (x, y), 5, col, -1)
+            x, y = e["x"], e["y"]
+            r = 14 + 26 * (age / FLASH_SEC)
+            cv2.circle(canvas, pt(x, y), s(r), col, lw(2), cv2.LINE_AA)
+            cv2.circle(canvas, pt(x, y), s(5), col, -1, cv2.LINE_AA)
             if tag:
-                cv2.putText(frame, tag, (x + 22, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
+                cv2.putText(canvas, tag, pt(x + 22, y - 10), FONT, fs(0.55), col, lw(2), cv2.LINE_AA)
 
         if "strip" in parts:
             strip_right = origin[0] - 20 if args.map_pos in ("br", "bl") else w - 20
-            draw_track_strip(frame, history, now, args.window, strip_right)
+            draw_track_strip(canvas, history, now, args.window, strip_right)
         if "map" in parts:
-            draw_minimap(frame, [e for e in bounces if e["t"] <= now], now, origin)
-        if now >= write_from:
-            writer.write(frame)
+            draw_minimap(canvas, [e for e in bounces if e["t"] <= now], now, origin)
+        writer.write(canvas)
 
     writer.release()
     cap.release()

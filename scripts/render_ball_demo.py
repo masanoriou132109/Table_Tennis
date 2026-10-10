@@ -28,6 +28,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
+from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
+                          fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import predict  # noqa: E402
 from scripts.landing_points import (DEFAULT_PROF_REPO, TABLE_W_CM, BallModel,  # noqa: E402
                                     ball_detections, load_prof_module)
@@ -36,23 +38,24 @@ STRIP_H = 22
 
 
 def draw_strip(frame, history, now, window_sec):
-    """底部滾動時間軸: history = [(t, state)], state 0=無 1=有 2=被閘門擋."""
+    """底部滾動時間軸: history = [(t, state)], state 0=無 1=有 2=被閘門擋. 尺寸以 720p 設計後放大."""
     h, w = frame.shape[:2]
-    x0, x1 = 20, w - 20
-    y0 = h - STRIP_H - 14
-    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (35, 35, 35), -1)
+    x0, x1 = s(20), w - s(20)
+    y0 = h - s(STRIP_H + 14)
+    sh = s(STRIP_H)
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + sh), (35, 35, 35), -1)
     t_start = now - window_sec
     colors = {0: (40, 40, 90), 1: (60, 200, 60), 2: (40, 180, 200)}
     for t, st in history:
         if t < t_start:
             continue
         px = x0 + int((t - t_start) / window_sec * (x1 - x0))
-        cv2.line(frame, (px, y0 + 2), (px, y0 + STRIP_H - 2), colors[st], 2)
-    cv2.rectangle(frame, (x0, y0), (x1, y0 + STRIP_H), (180, 180, 180), 1)
-    cv2.putText(frame, f"-{window_sec:.0f}s", (x0, y0 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-    cv2.putText(frame, "now", (x1 - 30, y0 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+        cv2.line(frame, (px, y0 + s(2)), (px, y0 + sh - s(2)), colors[st], lw(2))
+    cv2.rectangle(frame, (x0, y0), (x1, y0 + sh), (180, 180, 180), lw(1))
+    cv2.putText(frame, f"-{window_sec:.0f}s", (x0, y0 - s(5)),
+                cv2.FONT_HERSHEY_SIMPLEX, fs(0.45), (180, 180, 180), lw(1), cv2.LINE_AA)
+    cv2.putText(frame, "now", (x1 - s(30), y0 - s(5)),
+                cv2.FONT_HERSHEY_SIMPLEX, fs(0.45), (180, 180, 180), lw(1), cv2.LINE_AA)
 
 
 def main() -> None:
@@ -85,29 +88,31 @@ def main() -> None:
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    check_aspect(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    w, h = PROC_W, PROC_H   # 偵測在 1280x720, 畫面輸出 1080p
     start_f = int(args.start * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     tracker = TableTracker(w, h)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"balldemo_{Path(args.video).stem}.mp4"
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (OUT_W, OUT_H))
 
     history: list[tuple[float, int]] = []
     table_ok: list[tuple[float, bool]] = []
     for i in range(int(args.dur * fps)):
-        ok, frame = cap.read()
+        ok, raw = cap.read()
         if not ok:
             break
         now = (start_f + i) / fps
+        frame, canvas = to_proc(raw), to_out(raw)
 
         coords, scores, presence = predict(table_model, frame, device, w, h)
         quad = tracker.update(coords, scores, presence)
         H = None
         if quad is not None:
-            cv2.polylines(frame, [quad.astype(np.int32)], True, (0, 200, 0), 2)
+            cv2.polylines(canvas, [np.round(quad * UI).astype(np.int32)], True, (0, 200, 0), lw(2),
+                          cv2.LINE_AA)
             H = de.build_homography(quad[::-1].astype(np.float32))
         table_ok.append((now, quad is not None))
 
@@ -129,20 +134,20 @@ def main() -> None:
             best, state = None, 0
         if best is not None:
             col = (60, 220, 60) if state == 1 else (40, 200, 220)
-            cv2.circle(frame, (int(best["x"]), int(best["y"])), 16, col, 2)
-            cv2.putText(frame, f"{best['conf']:.2f}",
-                        (int(best["x"]) + 20, int(best["y"]) - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
+            cv2.circle(canvas, pt(best["x"], best["y"]), s(16), col, lw(2), cv2.LINE_AA)
+            cv2.putText(canvas, f"{best['conf']:.2f}", pt(best["x"] + 20, best["y"] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs(0.6), col, lw(2), cv2.LINE_AA)
         history.append((now, state))
 
         hud = f"BALL {best['conf']:.2f}" if state == 1 else \
               ("OFF-TABLE DET" if state == 2 else "NO BALL")
         hud_col = (60, 220, 60) if state == 1 else ((40, 200, 220) if state == 2 else (60, 60, 230))
-        cv2.putText(frame, hud, (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9, hud_col, 2)
-        cv2.putText(frame, f"t={now:.2f}s", (25, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                    (200, 200, 200), 1)
-        draw_strip(frame, history, now, args.window)
-        writer.write(frame)
+        cv2.putText(canvas, hud, pt(25, 45), cv2.FONT_HERSHEY_SIMPLEX, fs(0.9), hud_col, lw(2),
+                    cv2.LINE_AA)
+        cv2.putText(canvas, f"t={now:.2f}s", pt(25, 75), cv2.FONT_HERSHEY_SIMPLEX, fs(0.6),
+                    (200, 200, 200), lw(1), cv2.LINE_AA)
+        draw_strip(canvas, history, now, args.window)
+        writer.write(canvas)
 
     writer.release()
     cap.release()

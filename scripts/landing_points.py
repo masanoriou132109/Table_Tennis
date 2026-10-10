@@ -46,6 +46,7 @@ DEFAULT_BALL_MODEL = PROJECT_ROOT / "Models" / "BallDetector_rfdetr_20260930.mlp
 
 from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
+from src.video_io import PROC_H, PROC_W, check_aspect, to_proc  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 
 # ITTF 正規球桌尺寸 (cm)。教授原本 detect_events.py 寫 500x240 (長寬比 2.08),
@@ -310,8 +311,11 @@ def main() -> None:
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    check_aspect(src_w, src_h)
+    # 一律在 1280x720 處理 (門檻都在此尺寸校準); JSON 內所有像素座標都是處理座標
+    w, h = PROC_W, PROC_H
     tracker = TableTracker(w, h)
     start_f = int(args.start * fps)
     n_frames = int(args.dur * fps)
@@ -325,6 +329,7 @@ def main() -> None:
         ok, frame = cap.read()
         if not ok:
             break
+        frame = to_proc(frame)
         fi = start_f + i
         t = fi / fps
 
@@ -405,6 +410,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(
         {"video": args.video, "start": args.start, "dur": args.dur, "fps": fps,
+         "src_size": [src_w, src_h], "proc_size": [PROC_W, PROC_H],
          "zone_expand": expand, "conf": args.conf,
          "frames_with_table": n_table, "frames_total": len(frames),
          "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
