@@ -188,6 +188,58 @@ def mark_net_dribbles(events: list[dict], max_dt: float = DRIBBLE_MAX_DT,
     return n
 
 
+SERVE_GAP = 3.0           # s: 與前一個落點相隔超過此值 → 新回合開始
+SERVE_PAIR_DT = 0.6       # s: 發球第 1 跳 → 第 2 跳的最大時間差 (實測 0.38~0.42s)
+SERVE_PAIR_DIST = 100.0   # cm: 發球兩跳的最小桌面距離 (實測 153~173cm, 必跨網)
+
+
+def mark_serves(events: list[dict], gap: float = SERVE_GAP,
+                pair_dt: float = SERVE_PAIR_DT, pair_dist: float = SERVE_PAIR_DIST) -> dict:
+    """標記發球落點 (ev["serve"] = 1 / 2 / "?"), 不刪除、不改其他欄位。
+
+    回合開始 = 與前一個落點相隔 > gap 秒的落點 (回合間實測 15~36s, 回合內 < 0.9s)。
+    只用落點計時, 不用擊球: 死球期間的誤判擊球不該打斷判斷。
+
+    不直接把「回合第一個落點」當發球第 1 跳, 因為第 1 跳常漏抓, 那樣會把接球方的
+    第 2 跳誤標成第 1 跳。改看配對: 下一個落點在 pair_dt 內、位於網子另一側、距離
+    >= pair_dist、且中間沒有擊球 → 兩跳都抓到, 標 1 和 2。配對不成立 → "?"
+    (可能只抓到第 2 跳, 也可能是第 1 跳後軌跡斷了), 不硬判。
+    回傳各類數量。
+    """
+    net_x = TABLE_W_CM / 2
+    evs = sorted(events, key=lambda e: e["t"])
+    for e in evs:
+        e.pop("serve", None)
+    counts = {1: 0, 2: 0, "?": 0}
+    prev_bounce_t = None
+    for i, e in enumerate(evs):
+        if e.get("type") != "bounce":
+            continue
+        is_start = prev_bounce_t is None or e["t"] - prev_bounce_t > gap
+        prev_bounce_t = e["t"]
+        if not is_start:
+            continue
+        nxt, hit_between = None, False
+        for f in evs[i + 1:]:
+            if f.get("type") == "hit":
+                hit_between = True
+            elif f.get("type") == "bounce":
+                nxt = f
+                break
+        a, b = e.get("table"), nxt.get("table") if nxt else None
+        if (a and b and not hit_between
+                and nxt["t"] - e["t"] <= pair_dt
+                and (a[0] < net_x) != (b[0] < net_x)
+                and float(np.hypot(a[0] - b[0], a[1] - b[1])) >= pair_dist):
+            e["serve"], nxt["serve"] = 1, 2
+            counts[1] += 1
+            counts[2] += 1
+        else:
+            e["serve"] = "?"
+            counts["?"] += 1
+    return counts
+
+
 def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
     """跑 Core ML 球偵測器,回傳原圖座標的候選點。"""
     from PIL import Image
@@ -346,6 +398,7 @@ def main() -> None:
         n_mapped += 1
     n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist,
                                   args.dribble_net_tol)
+    n_serve = mark_serves(events)
 
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"
@@ -364,11 +417,13 @@ def main() -> None:
           f"球軌跡點 {len(track)}")
     print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標, "
           f"{n_dribble} 個標為觸網連續彈跳)")
+    print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
     for e in bounces[:12]:
         z = e.get("zone")
         tb = e.get("table")
         print(f"  t={e['t']:.2f}s  影像({e['x']:.0f},{e['y']:.0f})  "
-              f"桌面{tb}  分區 {z}" + ("  [觸網彈跳]" if e.get("net_dribble") else ""))
+              f"桌面{tb}  分區 {z}" + ("  [觸網彈跳]" if e.get("net_dribble") else "")
+              + (f"  [發球 {e['serve']}]" if e.get("serve") else ""))
     print(f"\n輸出 {out_path}")
 
 

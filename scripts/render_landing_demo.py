@@ -35,7 +35,7 @@ from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from scripts.infer_video import predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, mark_net_dribbles)
+                                    DRIBBLE_NET_TOL, mark_net_dribbles, mark_serves)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 觸網連續彈跳: 洋紅 (不計入落點)
 
@@ -114,7 +114,8 @@ def draw_minimap(canvas, bounces, now, origin):
             r = int(6 + 14 * (age / FLASH_SEC))
             cv2.circle(canvas, (px, py), r, (0, 255, 255), 2)
             cv2.circle(canvas, (px, py), 6, (0, 255, 255), -1)
-            flash = f"BOUNCE  zone {e['zone']}"
+            flash = (f"SERVE {e['serve']}  zone {e['zone']}" if e.get("serve")
+                     else f"BOUNCE  zone {e['zone']}")
         else:                      # 歷史落點: 暗紅小點
             cv2.circle(canvas, (px, py), 4, (90, 90, 230), -1)
             cv2.circle(canvas, (px, py), 4, (220, 220, 220), 1)
@@ -167,6 +168,8 @@ def main() -> None:
                                   args.dribble_net_tol)
     print(f"觸網連續彈跳: {n_dribble} 個 "
           f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側或前跳離網<={args.dribble_net_tol}cm, 中間無擊球)")
+    n_serve = mark_serves(data["events"])
+    print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
     # 全部落點都要顯示: 桌上(正常) / 桌外(疑似擊球誤判) / 未映射(當時無桌面資訊)。
     # 先前只取有 table 的,導致未映射的落點在 demo 中完全消失。
     bounces = [e for e in data["events"] if e.get("type") == "bounce"]
@@ -255,6 +258,8 @@ def main() -> None:
                 col, tag = (40, 170, 255), "OFF-TABLE"  # 桌外: 橘 (疑似擊球誤判)
             else:
                 col, tag = (160, 160, 160), "UNMAPPED"  # 無桌面資訊: 灰
+            if e.get("serve") and not e.get("net_dribble"):
+                tag = f"SERVE {e['serve']}" + (f" {tag}" if tag else "")
             x, y = int(e["x"]), int(e["y"])
             r = int(14 + 26 * (age / FLASH_SEC))
             cv2.circle(frame, (x, y), r, col, 2)
