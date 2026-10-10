@@ -102,6 +102,9 @@ def draw_minimap(canvas, bounces, now, origin):
         return (tx0 + int(e["table"][0] / TABLE_W * tw),
                 ty0 + th - int(e["table"][1] / TABLE_H * th))
 
+    # 發球第 1 跳落在發球方自己那側, 不是這一拍的落點 → 小視窗不顯示也不計數
+    # (主畫面仍標 SERVE 1 供肉眼確認)
+    bounces = [e for e in bounces if e.get("serve") != 1]
     dribbles = [e for e in bounces if e.get("net_dribble")]
     bounces = [e for e in bounces if not e.get("net_dribble")]
     on_table = [e for e in bounces if e.get("zone")]
