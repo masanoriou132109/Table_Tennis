@@ -44,10 +44,9 @@ DEFAULT_PROF_REPO = (PROJECT_ROOT.parent
 # 舊的 YOLO26 仍可用 --ball-model <教授 repo>/Models/BallDetector.mlpackage 指定。
 DEFAULT_BALL_MODEL = PROJECT_ROOT / "Models" / "BallDetector_rfdetr_20260930.mlpackage"
 
-from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from src.video_io import PROC_H, PROC_W, check_aspect, to_proc  # noqa: E402
-from scripts.infer_video import predict  # noqa: E402
+from scripts.infer_video import load_table_model, predict  # noqa: E402
 
 # ITTF 正規球桌尺寸 (cm)。教授原本 detect_events.py 寫 500x240 (長寬比 2.08),
 # 與真實球桌 (274/152.5 = 1.80) 不符 — 他已確認是筆誤。
@@ -301,6 +300,8 @@ def main() -> None:
     ap.add_argument("video")
     ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO), help="PingPongTracker repo 路徑")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--table-backend", choices=("coreml", "torch"), default="coreml",
+                    help="桌面模型執行方式: coreml (預設, Models/TableDetector.mlpackage) / torch (checkpoint)")
     ap.add_argument("--ball-model", default=None,
                     help="球偵測 .mlpackage (預設: Models/BallDetector_rfdetr_20260930.mlpackage, "
                          "RF-DETR Large)。YOLO / RF-DETR 格式自動判斷")
@@ -338,10 +339,7 @@ def main() -> None:
     print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    table_model = TableKeypointNet(pretrained=False).to(device)
-    table_model.load_state_dict(ckpt["model"])
-    table_model.eval()
+    table_model = load_table_model(args.ckpt, device, args.table_backend)
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0

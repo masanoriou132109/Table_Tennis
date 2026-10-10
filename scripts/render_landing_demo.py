@@ -31,11 +31,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.edge_refine import refine_quad  # noqa: E402
-from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
                           fs, lw, pt, s, to_out, to_proc)
-from scripts.infer_video import predict  # noqa: E402
+from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
                                     DRIBBLE_NET_TOL, mark_net_dribbles, mark_serves)
 
@@ -153,6 +152,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("json_path")
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--table-backend", choices=("coreml", "torch"), default="coreml",
+                    help="桌面模型執行方式: coreml (預設, Models/TableDetector.mlpackage) / torch (checkpoint)")
     ap.add_argument("--window", type=float, default=12.0, help="時間軸顯示秒數")
     ap.add_argument("--parts", default="table,ball,strip,bounce,map",
                     help="要顯示的元件,逗號分隔: table,ball,strip,bounce,map")
@@ -196,10 +197,7 @@ def main() -> None:
     track_by_frame = {p["frame"]: p for p in data.get("track", [])}
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model = TableKeypointNet(pretrained=False).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
+    model = load_table_model(args.ckpt, device, args.table_backend)
 
     cap = cv2.VideoCapture(video)
     check_aspect(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))

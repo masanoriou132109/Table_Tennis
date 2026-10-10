@@ -55,34 +55,40 @@ class TableKeypointNet(nn.Module):
         return heatmaps, presence_logit, visibility_logits
 
 
+def decode_prob_heatmaps(p: np.ndarray, window: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    """decode_heatmaps 的 numpy 版, 輸入為「已過 sigmoid」的機率 [B,4,Hh,Wh]
+    (Core ML 匯出的模型直接輸出機率)。回傳 coords [B,4,2] (輸入影像座標), scores [B,4]。
+    """
+    b, c, hh, wh = p.shape
+    flat = p.reshape(b, c, -1)
+    ix = flat.argmax(axis=2)
+    scores = np.take_along_axis(flat, ix[..., None], axis=2)[..., 0]
+    # 向量化計算。舊版逐角在 GPU 上取 int(), 每次都強制同步。
+    # 邊界處理與舊版相同: 補 0 等同把超出邊界的鄰域截掉 (0 不貢獻權重)。
+    pp = np.pad(p, ((0, 0), (0, 0), (window, window), (window, window)))
+    ys, xs = ix // wh, ix % wh                            # [B, C]
+    offs = np.arange(-window, window + 1)
+    rows = (ys[..., None] + offs + window)[..., :, None]  # [B, C, K, 1]
+    cols = (xs[..., None] + offs + window)[..., None, :]  # [B, C, 1, K]
+    patch = pp[np.arange(b)[:, None, None, None], np.arange(c)[None, :, None, None],
+               rows, cols]                                # [B, C, K, K]
+    total = patch.sum(axis=(2, 3))
+    cx = (patch.sum(axis=2) * (xs[..., None] + offs)).sum(-1) / total
+    cy = (patch.sum(axis=3) * (ys[..., None] + offs)).sum(-1) / total
+    coords = np.stack([cx, cy], -1) * HEATMAP_STRIDE + HEATMAP_STRIDE / 2
+    return coords.astype(np.float32), scores.astype(np.float32)
+
+
 def decode_heatmaps(heatmaps: torch.Tensor, window: int = 2) -> tuple[torch.Tensor, torch.Tensor]:
     """從 heatmap 取各角座標 (輸入影像座標系) 與峰值分數。
     先 argmax 找峰,再取 (2*window+1)^2 鄰域的機率加權質心做 subpixel 精修,
     消除 stride-4 的量化誤差。
     heatmaps: [B, 4, Hh, Wh] (未過 sigmoid)。回傳 coords [B,4,2], scores [B,4]。
     """
-    b, c, hh, wh = heatmaps.shape
     probs = torch.sigmoid(heatmaps)
-    scores, idx = probs.reshape(b, c, -1).max(dim=2)
-
-    # 一次搬到 CPU 用 numpy 向量化計算。舊版逐角在 GPU 上取 int(), 每次都強制同步,
-    # 光解碼就佔每幀約 12ms (模型本身約 5ms)。
-    # 邊界處理與舊版相同: 補 0 等同把超出邊界的鄰域截掉 (0 不貢獻權重)。
-    p = np.pad(probs.detach().float().cpu().numpy(),
-               ((0, 0), (0, 0), (window, window), (window, window)))
-    ix = idx.cpu().numpy()
-    ys, xs = ix // wh, ix % wh                            # [B, C]
-    offs = np.arange(-window, window + 1)
-    rows = (ys[..., None] + offs + window)[..., :, None]  # [B, C, K, 1]
-    cols = (xs[..., None] + offs + window)[..., None, :]  # [B, C, 1, K]
-    patch = p[np.arange(b)[:, None, None, None], np.arange(c)[None, :, None, None],
-              rows, cols]                                 # [B, C, K, K]
-    total = patch.sum(axis=(2, 3))
-    cx = (patch.sum(axis=2) * (xs[..., None] + offs)).sum(-1) / total
-    cy = (patch.sum(axis=3) * (ys[..., None] + offs)).sum(-1) / total
-    coords = torch.from_numpy(np.stack([cx, cy], -1).astype(np.float32)).to(heatmaps.device)
-    coords = coords * HEATMAP_STRIDE + HEATMAP_STRIDE / 2
-    return coords, scores
+    scores = probs.reshape(*probs.shape[:2], -1).max(dim=2).values
+    coords, _ = decode_prob_heatmaps(probs.detach().float().cpu().numpy(), window)
+    return torch.from_numpy(coords).to(heatmaps.device), scores
 
 
 def heatmap_focal_loss(pred_logits: torch.Tensor, target: torch.Tensor,

@@ -26,11 +26,10 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.model import TableKeypointNet  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
                           fs, lw, pt, s, to_out, to_proc)
-from scripts.infer_video import predict  # noqa: E402
+from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DEFAULT_PROF_REPO, TABLE_W_CM, BallModel,  # noqa: E402
                                     ball_detections, load_prof_module)
 
@@ -63,6 +62,8 @@ def main() -> None:
     ap.add_argument("video")
     ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO))
     ap.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    ap.add_argument("--table-backend", choices=("coreml", "torch"), default="coreml",
+                    help="桌面模型執行方式: coreml (預設, Models/TableDetector.mlpackage) / torch (checkpoint)")
     ap.add_argument("--ball-model", default=None,
                     help="球偵測 .mlpackage (預設: Models/BallDetector_rfdetr_20260930.mlpackage, "
                          "RF-DETR Large)。YOLO / RF-DETR 格式自動判斷")
@@ -81,10 +82,7 @@ def main() -> None:
     print(ball_model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    table_model = TableKeypointNet(pretrained=False).to(device)
-    table_model.load_state_dict(ckpt["model"])
-    table_model.eval()
+    table_model = load_table_model(args.ckpt, device, args.table_backend)
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0

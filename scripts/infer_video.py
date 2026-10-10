@@ -28,7 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.dataset import IMAGENET_MEAN, IMAGENET_STD, INPUT_H, INPUT_W  # noqa: E402
 from src.homography import draw_table_grid  # noqa: E402
 from src.edge_refine import refine_quad  # noqa: E402
-from src.model import TableKeypointNet, decode_heatmaps  # noqa: E402
+from src.model import TableKeypointNet, decode_heatmaps, decode_prob_heatmaps  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
                           fs, lw, pt, s, to_out, to_proc)
@@ -42,8 +42,45 @@ def preprocess(frame: np.ndarray, device) -> torch.Tensor:
     return torch.from_numpy(img.transpose(2, 0, 1))[None].to(device)
 
 
+DEFAULT_TABLE_MLPACKAGE = PROJECT_ROOT / "Models" / "TableDetector.mlpackage"
+
+
+class CoreMLTableModel:
+    """桌面模型的 Core ML 版 (scripts/export_coreml.py 匯出; 正規化與 sigmoid 已包在模型內)。
+
+    與 PyTorch 版差異約 0.03px (fp16 運算), 在 Mac 上可用 Neural Engine,
+    比 PyTorch MPS 快 (MPS 前向約 11ms/幀)。也是 iOS app 實際會用的版本。
+    """
+
+    def __init__(self, path: Path, ckpt: str | None = None):
+        import coremltools as ct
+        if not path.exists():
+            raise SystemExit(f"找不到 {path}\n請先執行: python scripts/export_coreml.py "
+                             f"(或用 --table-backend torch)")
+        if ckpt and Path(ckpt).exists() and path.stat().st_mtime < Path(ckpt).stat().st_mtime:
+            print(f"警告: {path.name} 比 {Path(ckpt).name} 舊, 可能不是同一個模型 — "
+                  f"重新訓練後請重新執行 scripts/export_coreml.py")
+        self.ml = ct.models.MLModel(str(path), compute_units=ct.ComputeUnit.ALL)
+
+
+def load_table_model(ckpt: str, device, backend: str = "coreml"):
+    """backend: coreml (預設, 較快) / torch (訓練用的原始權重)。"""
+    if backend == "coreml":
+        return CoreMLTableModel(DEFAULT_TABLE_MLPACKAGE, ckpt)
+    model = TableKeypointNet(pretrained=False).to(device)
+    model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=False)["model"])
+    return model.eval()
+
+
 @torch.no_grad()
 def predict(model, frame, device, orig_w, orig_h):
+    if isinstance(model, CoreMLTableModel):
+        from PIL import Image
+        rgb = cv2.cvtColor(cv2.resize(frame, (INPUT_W, INPUT_H)), cv2.COLOR_BGR2RGB)
+        out = model.ml.predict({"image": Image.fromarray(rgb)})
+        coords, scores = decode_prob_heatmaps(np.asarray(out["heatmaps"], np.float32))
+        coords = coords[0] * [orig_w / INPUT_W, orig_h / INPUT_H]
+        return coords, scores[0], float(np.asarray(out["presence"]).reshape(-1)[0])
     heatmaps, presence_logit, _ = model(preprocess(frame, device))
     coords, scores = decode_heatmaps(heatmaps)
     coords = coords[0].cpu().numpy() * [orig_w / INPUT_W, orig_h / INPUT_H]
@@ -72,6 +109,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video")
     parser.add_argument("--ckpt", default=str(PROJECT_ROOT / "checkpoints" / "best.pt"))
+    parser.add_argument("--table-backend", choices=("coreml", "torch"), default="coreml",
+                    help="桌面模型執行方式: coreml (預設, Models/TableDetector.mlpackage) / torch (checkpoint)")
     parser.add_argument("--mode", choices=("video", "sample"), default="sample")
     parser.add_argument("--n", type=int, default=8, help="sample 模式抽幾幀")
     parser.add_argument("--start", type=float, default=0.0, help="video 模式起始秒")
@@ -88,10 +127,7 @@ def main() -> None:
     args = parser.parse_args()
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model = TableKeypointNet(pretrained=False).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
+    model = load_table_model(args.ckpt, device, args.table_backend)
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
