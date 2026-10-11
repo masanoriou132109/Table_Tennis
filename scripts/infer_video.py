@@ -57,7 +57,11 @@ class CoreMLTableModel:
         if not path.exists():
             raise SystemExit(f"找不到 {path}\n請先執行: python scripts/export_coreml.py "
                              f"(或用 --table-backend torch)")
-        if ckpt and Path(ckpt).exists() and path.stat().st_mtime < Path(ckpt).stat().st_mtime:
+        # 看 Data/ 內的模型與權重檔, 不看資料夾本身: coremltools 載入時會改寫
+        # Manifest.json, 資料夾時間每次都更新, 那樣永遠不會警告。
+        model_files = [f for f in (path / "Data").rglob("*") if f.is_file()]
+        exported = max((f.stat().st_mtime for f in model_files), default=0.0)
+        if ckpt and Path(ckpt).exists() and exported < Path(ckpt).stat().st_mtime:
             print(f"警告: {path.name} 比 {Path(ckpt).name} 舊, 可能不是同一個模型 — "
                   f"重新訓練後請重新執行 scripts/export_coreml.py")
         self.ml = ct.models.MLModel(str(path), compute_units=ct.ComputeUnit.ALL)
