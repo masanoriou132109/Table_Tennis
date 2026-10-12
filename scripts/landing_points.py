@@ -254,7 +254,8 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
     規則: 兩次擊球之間, 只有「落在對方那側的第一跳」算落點。
       own_side      落在擊球方自己那側 (掛網沒過、過網後倒旋回來)        → 死球
       second_bounce 對方那側的第二跳以後 (觸網後連彈)                     → 死球
-      net_edge      離網 <= net_edge: 碰網或網邊落桌無法區分, 不佔「第一跳」
+      net_edge      離網 <= net_edge: 碰網或網邊落桌無法區分, 不佔「第一跳」;
+                    但這一拍已偵測到碰網時, 網邊落點必是落桌 → 佔第一跳 (仍不算)
       dead_ball     死球後到下一回合開始前的落點 (球員拍球、撿球、球在滾)
       net_dribble   沒偵測到擊球、不知道擊球方時, 退回 mark_net_dribbles 的判斷
     發球第 1 跳例外 (本來就落在發球方), 並以它決定發球方。
@@ -263,12 +264,16 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
     依據 (London 2026): 09:47 / 10:07 / 10:25 三次掛網都是「擊球後第一跳落在擊球方」,
     其中 10:07 掛網後彈到近端線才落下 → 不能用離網距離判斷掛網;
     18:00 碰網那下 (離網 8cm) 被當成落點, 真正的第一跳 (離網 15cm) 反而被當連彈。
+    碰網一拍只會發生一次 (Lin vs Moregard 02:32): 02:32.03 打到網帶 (離網附近的桌外事件),
+    02:32.47 接球方第一跳被算到網子另一側 0.5cm → 網邊; 若它不佔第一跳, 第二、三跳
+    會依序遞補成「第一跳」。碰網的證據: 網邊 (<= net_hit) 的擊球, 或網邊的桌外落點。
     回傳不算的落點數。
     """
     net_x = TABLE_W_CM / 2
     hitter = None          # "L" / "R": 最近一次球員擊球在哪一側
     counted = False        # 這一拍是否已有有效落點
     dead = False
+    net_seen = False       # 這一拍是否已偵測到碰網
     prev_t = None
     n = 0
     for e in sorted(events, key=lambda e: e["t"]):
@@ -279,17 +284,23 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
                 continue
             if abs(tb[0] - net_x) <= net_hit:
                 e["net_touch"] = True
+                net_seen = True
                 continue
             if not dead:
-                hitter, counted = ("L" if tb[0] < net_x else "R"), False
+                hitter, counted, net_seen = ("L" if tb[0] < net_x else "R"), False, False
             continue
         if e.get("type") != "bounce":
             continue
         e.pop("uncounted", None)
         if not e.get("zone"):
-            continue                       # 桌外落點另外顯示, 不影響回合狀態
+            # 桌外落點另外顯示, 不影響回合狀態; 但在網邊的是球打到網帶 (網帶高於桌面,
+            # 透視後映射到桌外), 記為這一拍已碰網
+            tb = e.get("table")
+            if tb and abs(tb[0] - net_x) <= net_hit:
+                net_seen = True
+            continue
         if prev_t is None or e["t"] - prev_t > gap:
-            hitter, counted, dead = None, False, False   # 新回合
+            hitter, counted, dead, net_seen = None, False, False, False   # 新回合
         prev_t = e["t"]
         side = "L" if e["table"][0] < net_x else "R"
         if e.get("serve") == 1:
@@ -299,6 +310,10 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
             e["uncounted"] = "dead_ball"
         elif abs(e["table"][0] - net_x) <= net_edge:
             e["uncounted"] = "net_edge"
+            if net_seen and hitter is not None:
+                if counted:                  # 已有第一跳 → 這是之後的跳
+                    dead = True
+                counted = True
         elif hitter is None:
             if e.get("net_dribble"):
                 e["uncounted"] = "net_dribble"
