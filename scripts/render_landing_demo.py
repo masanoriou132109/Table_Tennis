@@ -36,8 +36,8 @@ from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noq
                           fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, classify_bounces, mark_net_dribbles,
-                                    mark_serves)
+                                    DRIBBLE_NET_TOL, apply_edge_buffer, classify_bounces,
+                                    mark_net_dribbles, mark_serves)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 不算的落點: 洋紅 (不計入落點)
 # classify_bounces 的原因 → 畫面標籤
@@ -179,6 +179,7 @@ def main() -> None:
 
     data = json.loads(Path(args.json_path).read_text())
     # 渲染時重新判定 (舊 JSON 也適用, 調門檻不必重跑球偵測)
+    apply_edge_buffer(data["events"])
     n_dribble = mark_net_dribbles(data["events"], args.dribble_max_dt, args.dribble_max_dist,
                                   args.dribble_net_tol)
     print(f"觸網連續彈跳: {n_dribble} 個 "

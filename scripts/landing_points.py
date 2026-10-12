@@ -140,6 +140,49 @@ class BallModel:
         return f"BallModel({self.path.name}, {self.arch} @ {self.imgsz})"
 
 
+EDGE_BUFFER_CM = 5.0   # 超出桌邊 <= 此距離的落點仍算桌上 (擦邊球)
+
+
+def apply_edge_buffer(events: list[dict], buf: float = EDGE_BUFFER_CM) -> int:
+    """超出桌邊 buf 以內的落點拉回桌邊並給分區 (ev["edge_buffer"]=True, 原座標存 table_raw)。
+
+    教授的 zone_of 完全沒有緩衝, 超出 0.1cm 就算桌外。5cm = 球半徑 2cm + 桌角定位
+    誤差 (約 2px; 深度方向被透視壓縮, 1px 約 1.5cm)。實例 London 28:20.72 擦邊落點
+    超出 2.4cm。超出 7.5cm 的網帶 (Lin 02:32.03) 與擊球誤判 (London 56.46) 維持桌外。
+    可重複呼叫 (以 table_raw 為準)。回傳拉回的數量。
+    """
+    n = 0
+    for e in events:
+        if e.get("type") != "bounce":
+            continue
+        raw = e.get("table_raw") or e.get("table")
+        if not raw:
+            continue
+        x, y = raw
+        dx, dy = max(-x, x - TABLE_W_CM, 0.0), max(-y, y - TABLE_H_CM, 0.0)
+        if dx == 0 and dy == 0:
+            continue                            # 本來就在桌上
+        e.pop("edge_buffer", None)
+        if (dx * dx + dy * dy) ** 0.5 <= buf:
+            cx, cy = min(max(x, 0.0), TABLE_W_CM), min(max(y, 0.0), TABLE_H_CM)
+            e["table_raw"], e["table"], e["edge_buffer"] = raw, [round(cx, 1), round(cy, 1)], True
+            e["zone"] = zone_of_cm(cx, cy)
+            n += 1
+        elif "table_raw" in e:                  # 門檻調小後還原
+            e["table"], e["zone"] = raw, None
+            del e["table_raw"]
+    return n
+
+
+def zone_of_cm(tx: float, ty: float) -> str:
+    """與教授 zone_of 相同的分區 (半場 L/R + 3x3), 輸入須在桌面內。"""
+    half = "L" if tx < TABLE_W_CM / 2 else "R"
+    hx = tx if half == "L" else tx - TABLE_W_CM / 2
+    col = min(int(hx / (TABLE_W_CM / 2 / 3)), 2)
+    row = min(int(ty / (TABLE_H_CM / 3)), 2)
+    return f"{half}{row * 3 + col + 1}"
+
+
 DRIBBLE_MAX_DT = 0.6      # s
 DRIBBLE_MAX_DIST = 60.0   # cm (桌面座標)
 DRIBBLE_NET_TOL = 10.0    # cm: 前一跳離網子這麼近 → 位置誤差下分不出哪一側, 不檢查同側
@@ -540,6 +583,7 @@ def main() -> None:
         if ev.get("type") == "bounce":
             ev["zone"] = de.zone_of(tx, ty)
             n_mapped += 1
+    n_edge = apply_edge_buffer(events)
     n_dribble = mark_net_dribbles(events, args.dribble_max_dt, args.dribble_max_dist,
                                   args.dribble_net_tol)
     n_serve = mark_serves(events)
@@ -566,6 +610,7 @@ def main() -> None:
           f"{n_dribble} 個標為觸網連續彈跳)")
     print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
     print(f"不算的落點 (掛網/過網彈回/連彈/網邊/死球): {n_uncounted} 個")
+    print(f"擦邊緩衝 ({EDGE_BUFFER_CM:.0f}cm) 拉回桌上: {n_edge} 個")
     for e in bounces[:12]:
         z = e.get("zone")
         tb = e.get("table")
