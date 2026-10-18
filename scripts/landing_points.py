@@ -564,7 +564,7 @@ def ball_detections(ball: BallModel, frame, conf_min: float) -> list[dict]:
     return out
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("video")
     ap.add_argument("--prof-repo", default=str(DEFAULT_PROF_REPO), help="PingPongTracker repo 路徑")
@@ -602,15 +602,29 @@ def main() -> None:
     ap.add_argument("--no-kink", action="store_true",
                     help="停用折角落點補抓 (y 速度突然往上改變, 但沒有由正轉負)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
-    args = ap.parse_args()
+    ap.add_argument("--refresh-cache", action="store_true",
+                    help="重跑球偵測與桌面模型 (第一階段), 覆蓋 data/cache/ 的快取")
+    return ap
 
-    repo = Path(args.prof_repo)
-    de = load_prof_module(repo)
-    if not args.no_fix_debounce:
-        patch_debounce(de)
+
+CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+
+
+def cache_path(args) -> Path:
+    """第一階段快取檔名: 影片 + 片段 + 球偵測門檻 + 模型。換任何一個都會重跑。"""
+    ball = Path(args.ball_model).stem if args.ball_model else DEFAULT_BALL_MODEL.stem
+    return CACHE_DIR / (f"{Path(args.video).stem}_s{args.start:g}_d{args.dur:g}"
+                        f"_c{args.conf:g}_{ball}_{args.table_backend}.npz")
+
+
+def run_detectors(args) -> dict:
+    """第一階段 (慢): 逐幀跑桌面模型與球偵測。
+
+    存桌面模型的「原始輸出」(4 角、分數、presence), 不存 TableTracker 的結果,
+    這樣改追蹤器 (例如桌面鎖定) 時快取仍可用。
+    """
     ball_model = BallModel(args.ball_model)
     print(ball_model)
-
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     table_model = load_table_model(args.ckpt, device, args.table_backend)
 
@@ -619,39 +633,68 @@ def main() -> None:
     src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     check_aspect(src_w, src_h)
-    # 一律在 1280x720 處理 (門檻都在此尺寸校準); JSON 內所有像素座標都是處理座標
-    w, h = PROC_W, PROC_H
-    tracker = TableTracker(w, h)
     start_f = int(args.start * fps)
     n_frames = int(args.dur * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
+
+    fis, coords_l, scores_l, presence_l, dets_l = [], [], [], [], []
+    for i in range(n_frames):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        # 一律在 1280x720 處理 (門檻都在此尺寸校準); JSON 內所有像素座標都是處理座標
+        frame = to_proc(frame)
+        coords, scores, presence = predict(table_model, frame, device, PROC_W, PROC_H)
+        fis.append(start_f + i)
+        coords_l.append(coords)
+        scores_l.append(scores)
+        presence_l.append(presence)
+        dets_l.append(ball_detections(ball_model, frame, args.conf))
+    cap.release()
+    return {"fps": fps, "src_size": [src_w, src_h], "frame": np.array(fis),
+            "coords": np.array(coords_l, np.float64).reshape(-1, 4, 2),
+            "scores": np.array(scores_l, np.float64).reshape(-1, 4),
+            "presence": np.array(presence_l, np.float64), "dets": dets_l}
+
+
+def load_or_run_detectors(args) -> dict:
+    path = cache_path(args)
+    if path.exists() and not args.refresh_cache:
+        z = np.load(path, allow_pickle=False)
+        print(f"讀取快取 {path.relative_to(PROJECT_ROOT)}")
+        return {"fps": float(z["fps"]), "src_size": z["src_size"].tolist(), "frame": z["frame"],
+                "coords": z["coords"], "scores": z["scores"], "presence": z["presence"],
+                "dets": json.loads(str(z["dets_json"]))}
+    raw = run_detectors(args)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, fps=raw["fps"], src_size=np.array(raw["src_size"]),
+                        frame=raw["frame"], coords=raw["coords"], scores=raw["scores"],
+                        presence=raw["presence"], dets_json=json.dumps(raw["dets"]))
+    print(f"寫入快取 {path.relative_to(PROJECT_ROOT)}")
+    return raw
+
+
+def analyze(raw: dict, args, de) -> tuple[dict, dict]:
+    """第二階段 (快): 桌面追蹤 → 球偵測過濾 → 事件 → 落點規則。回傳 (輸出 JSON, 統計)。"""
+    fps = raw["fps"]
+    w, h = PROC_W, PROC_H
+    tracker = TableTracker(w, h)
 
     frames: list[dict] = []
     H_by_frame: dict[int, np.ndarray] = {}
     quads_px: list[np.ndarray] = []   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
     n_table = 0
     quad_by_frame: dict[int, np.ndarray] = {}   # 供裙板遮罩
-    for i in range(n_frames):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frame = to_proc(frame)
-        fi = start_f + i
-        t = fi / fps
-
-        coords, scores, presence = predict(table_model, frame, device, w, h)
-        quad = tracker.update(coords, scores, presence)
+    for k, fi in enumerate(raw["frame"].tolist()):
+        quad = tracker.update(raw["coords"][k], raw["scores"][k], float(raw["presence"][k]))
         if quad is not None:
             # 我們的 [FL,FR,NR,NL] → 他的 [NL,NR,FR,FL] (互為反序)
             H_by_frame[fi] = de.build_homography(quad[::-1].astype(np.float32))
             quads_px.append(quad)
-            n_table += 1
-
-        if quad is not None:
             quad_by_frame[fi] = quad
-        frames.append({"t": t, "frame": fi,
-                       "dets": ball_detections(ball_model, frame, args.conf)})
-    cap.release()
+            n_table += 1
+        # dets 會被下面的遮罩/閘門改寫, 複製一份以免動到快取內容
+        frames.append({"t": fi / fps, "frame": fi, "dets": [dict(d) for d in raw["dets"][k]]})
 
     # 球桌前裙板遮罩。全部幀處理完再做, 才能往前「和往後」找最近的桌面框:
     # 追蹤器要連續幾幀一致才確認桌面, 確認前那幾幀 (常是發球前) 沒有框, 只往前找會漏。
@@ -739,30 +782,45 @@ def main() -> None:
     n_serve = mark_serves(events)
     n_uncounted = classify_bounces(events)
 
+    result = {"video": args.video, "start": args.start, "dur": args.dur, "fps": fps,
+              "src_size": raw["src_size"], "proc_size": [PROC_W, PROC_H],
+              "zone_expand": expand, "conf": args.conf,
+              "frames_with_table": n_table, "frames_total": len(frames),
+              "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
+              "apron_masked": n_apron,
+              "track_points": len(track), "track": track, "events": events}
+    stats = {"n_table": n_table, "n_frames": len(frames), "n_track": len(track), "n_apron": n_apron,
+             "n_mapped": n_mapped, "n_dribble": n_dribble, "n_serve": n_serve,
+             "n_uncounted": n_uncounted, "n_edge": n_edge, "n_touch": n_touch, "n_kink": n_kink}
+    return result, stats
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    de = load_prof_module(Path(args.prof_repo))
+    if not args.no_fix_debounce:
+        patch_debounce(de)
+    raw = load_or_run_detectors(args)
+    result, st = analyze(raw, args, de)
+    events = result["events"]
+
     out_path = Path(args.out) if args.out else \
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(
-        {"video": args.video, "start": args.start, "dur": args.dur, "fps": fps,
-         "src_size": [src_w, src_h], "proc_size": [PROC_W, PROC_H],
-         "zone_expand": expand, "conf": args.conf,
-         "frames_with_table": n_table, "frames_total": len(frames),
-         "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
-         "apron_masked": n_apron,
-         "track_points": len(track), "track": track, "events": events},
-        ensure_ascii=False, indent=2))
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
 
     bounces = [e for e in events if e.get("type") == "bounce"]
     hits = [e for e in events if e.get("type") == "hit"]
-    print(f"影格 {len(frames)}  有桌面 {n_table} ({n_table/max(len(frames),1):.0%})  "
-          f"球軌跡點 {len(track)}  裙板遮罩擋掉 {n_apron} 個偵測")
-    print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {n_mapped} 個成功映射到桌面座標, "
-          f"{n_dribble} 個標為觸網連續彈跳)")
-    print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
-    print(f"不算的落點 (掛網/過網彈回/連彈/網邊/死球): {n_uncounted} 個")
-    print(f"擦邊緩衝 ({EDGE_BUFFER_CM:.0f}cm) 拉回桌上: {n_edge} 個")
-    print(f"觸桌點重估 (y(t) 交點): {n_touch}/{len(bounces)} 個落點")
-    print(f"折角落點補抓: {n_kink} 個" + "".join(
+    n_table, n_frames = st["n_table"], st["n_frames"]
+    print(f"影格 {n_frames}  有桌面 {n_table} ({n_table/max(n_frames,1):.0%})  "
+          f"球軌跡點 {st['n_track']}  裙板遮罩擋掉 {st['n_apron']} 個偵測")
+    print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {st['n_mapped']} 個成功映射到桌面座標, "
+          f"{st['n_dribble']} 個標為觸網連續彈跳)")
+    print(f"發球: 兩跳都抓到 {st['n_serve'][1]} 次, 只抓到一跳/無法確定 {st['n_serve']['?']} 次")
+    print(f"不算的落點 (掛網/過網彈回/連彈/網邊/死球): {st['n_uncounted']} 個")
+    print(f"擦邊緩衝 ({EDGE_BUFFER_CM:.0f}cm) 拉回桌上: {st['n_edge']} 個")
+    print(f"觸桌點重估 (y(t) 交點): {st['n_touch']}/{len(bounces)} 個落點")
+    print(f"折角落點補抓: {st['n_kink']} 個" + "".join(
         f"  t={e['t']:.2f}s ({e['kink_dv']:.0f}px/s)" for e in bounces if e.get("kink")))
     for e in bounces[:12]:
         z = e.get("zone")
@@ -772,6 +830,8 @@ def main() -> None:
               + (f"  [發球 {e['serve']}]" if e.get("serve") else "")
               + (f"  [不算: {e['uncounted']}]" if e.get("uncounted") else ""))
     print(f"\n輸出 {out_path}")
+
+
 
 
 if __name__ == "__main__":

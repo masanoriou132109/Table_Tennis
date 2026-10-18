@@ -1,0 +1,65 @@
+{
+  "_說明": [
+    "使用者肉眼確認過的落點/擊球案例 (scripts/regression.py 用)。時間 t 一律是原片秒數。",
+    "expect: counted=桌上且算落點 / not_counted=沒有落點或有但不算 / bounce=有落點 (不管算不算) /",
+    "        no_bounce=附近不該有任何落點事件 / serve1, serve2=發球第 1/2 跳 / hit=附近要有擊球 / no_hit=附近不該有擊球 /",
+    "        none_counted_in=t 到 t_end 之間沒有任何算數的落點",
+    "side: 可選, 落點要在 L 或 R 半場。tol: 時間容差 (秒), 預設 0.1。",
+    "status: pass=現在就該通過 / known_issue=已知錯誤, 使用者說可忽略 / target=現在錯, 預期修擊球偵測後修好"
+  ],
+  "clips": {
+    "london_0000": {"video": "videos/highqua_videos/1440pFULL MATCH  Tomokazu Harimoto vs Lin Yun-Ju  WT - SF  #ITTFWorlds2026.mp4", "start": 0, "dur": 60},
+    "london_0935": {"video": "videos/highqua_videos/1440pFULL MATCH  Tomokazu Harimoto vs Lin Yun-Ju  WT - SF  #ITTFWorlds2026.mp4", "start": 575, "dur": 70},
+    "london_1745": {"video": "videos/highqua_videos/1440pFULL MATCH  Tomokazu Harimoto vs Lin Yun-Ju  WT - SF  #ITTFWorlds2026.mp4", "start": 1065, "dur": 30},
+    "london_2805": {"video": "videos/highqua_videos/1440pFULL MATCH  Tomokazu Harimoto vs Lin Yun-Ju  WT - SF  #ITTFWorlds2026.mp4", "start": 1685, "dur": 25},
+    "lin_0217": {"video": "videos/highqua_videos/1080p20260508ITTFWorlds-Lin Yun-Ju vs Truls Moregard.mp4", "start": 137, "dur": 30},
+    "webm_0000": {"video": "videos/highqua_videos/2025WTTInche-Lee Sang Su.webm", "start": 0, "dur": 120}
+  },
+  "cases": [
+    {"clip": "london_0000", "t": 3.20, "expect": "serve1", "status": "pass", "source": "10-16 使用者: 列出的都沒有問題"},
+    {"clip": "london_0000", "t": 3.60, "expect": "serve2", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 4.04, "expect": "counted", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 15.32, "expect": "serve1", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 15.76, "expect": "serve2", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 16.40, "expect": "counted", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 16.70, "expect": "counted", "status": "pass", "source": "10-16"},
+    {"clip": "london_0000", "t": 17.02, "expect": "counted", "status": "pass", "source": "10-16 使用者指出: 沒有最低點的落點 (折角)"},
+    {"clip": "london_0000", "t": 34.54, "expect": "serve1", "status": "pass", "source": "10-10 使用者: 四次發球都成功判斷"},
+    {"clip": "london_0000", "t": 34.94, "expect": "serve2", "status": "pass", "source": "10-10"},
+    {"clip": "london_0000", "t": 54.38, "expect": "no_bounce", "status": "pass", "source": "10-10 使用者: 球桌側邊 DHS logo 假落點"},
+    {"clip": "london_0000", "t": 55.18, "expect": "serve1", "status": "pass", "source": "10-10"},
+    {"clip": "london_0000", "t": 55.56, "expect": "serve2", "status": "pass", "source": "10-10"},
+    {"clip": "london_0000", "t": 56.50, "tol": 0.15, "expect": "hit", "status": "target", "source": "10-10 使用者: 56.46 是擊球被誤判成落點 (舊紀錄 56.46, 10-16 那次跑出來在 56.58)"},
+    {"clip": "london_0000", "t": 56.66, "expect": "counted", "status": "target", "source": "10-10 使用者: 有進球的平擊球; 因 56.46 擊球誤判而被判不算"},
+    {"clip": "london_0000", "t": 59.40, "expect": "no_bounce", "status": "pass", "source": "10-10 使用者: DHS logo 附近不該出現的 off-table"},
+
+    {"clip": "london_0935", "t": 587.36, "expect": "not_counted", "status": "pass", "source": "10-10 #1 掛網落在擊球方"},
+    {"clip": "london_0935", "t": 587.64, "expect": "not_counted", "status": "pass", "source": "10-10 #1"},
+    {"clip": "london_0935", "t": 607.28, "expect": "no_hit", "status": "target", "source": "10-10 #2 碰網被判成擊球 (目前靠 NET_HIT_CM 在下游當成碰網)"},
+    {"clip": "london_0935", "t": 607.90, "expect": "not_counted", "status": "pass", "source": "10-10 #2 掛網後落在擊球方"},
+    {"clip": "london_0935", "t": 608.98, "expect": "not_counted", "status": "pass", "source": "10-10 #2 球員拍球"},
+    {"clip": "london_0935", "t": 623.68, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 10:23 serve 1 是對的"},
+    {"clip": "london_0935", "t": 625.14, "expect": "not_counted", "status": "pass", "source": "10-10 #3 掛網落在擊球方"},
+
+    {"clip": "london_1745", "t": 1079.54, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 沒 demo, 當成對的"},
+    {"clip": "london_1745", "t": 1079.92, "expect": "serve2", "status": "pass", "source": "10-18 同上"},
+    {"clip": "london_1745", "t": 1080.28, "expect": "not_counted", "status": "pass", "source": "10-10 球打在網子上彈起"},
+    {"clip": "london_1745", "t": 1080.54, "expect": "counted", "side": "L", "status": "pass", "source": "10-10 觸網過網後真正的第一跳"},
+    {"clip": "london_1745", "t": 1081.00, "t_end": 1082.30, "expect": "none_counted_in", "status": "pass", "source": "10-10 倒旋回到擊球方之後全部不算"},
+
+    {"clip": "london_2805", "t": 1700.72, "expect": "counted", "status": "pass", "source": "10-12 使用者: 擦邊的正確落點"},
+    {"clip": "london_2805", "t": 1702.22, "expect": "not_counted", "status": "pass", "source": "10-12 使用者: 確實是碰網"},
+    {"clip": "london_2805", "t": 1702.64, "expect": "counted", "status": "pass", "source": "10-12 碰網過網落在端線附近"},
+    {"clip": "london_2805", "t": 1703.18, "expect": "counted", "side": "L", "status": "pass", "source": "10-12 使用者: 落點在桌內離端線一段距離"},
+
+    {"clip": "lin_0217", "t": 148.50, "expect": "serve1", "status": "pass", "source": "10-18 使用者: serve 1 有偵測到 (位置 y 偏很多, 不驗位置)"},
+    {"clip": "lin_0217", "t": 151.60, "expect": "counted", "status": "pass", "source": "10-16 使用者指出 151.61: 沒有最低點的落點 (折角)"},
+    {"clip": "lin_0217", "t": 152.47, "expect": "not_counted", "status": "pass", "source": "10-12 使用者: 過網後第一跳離網很近, 不算合理"},
+    {"clip": "lin_0217", "t": 153.27, "expect": "not_counted", "status": "known_issue", "source": "10-12 不該算; 10-16 觸桌點重估後又被算, 使用者說可忽略"},
+    {"clip": "lin_0217", "t": 153.60, "expect": "not_counted", "status": "pass", "source": "10-12 不該算; 10-18 基準為 second_bounce (因 153.27 被誤算才判對), 使用者決定列為一般案例"},
+
+    {"clip": "webm_0000", "t": 97.32, "expect": "not_counted", "status": "pass", "source": "10-04 使用者: 掛網沒過, 落在擊球方網邊"},
+    {"clip": "webm_0000", "t": 97.72, "expect": "not_counted", "status": "pass", "source": "10-04"},
+    {"clip": "webm_0000", "t": 98.10, "expect": "not_counted", "status": "pass", "source": "10-04"}
+  ]
+}
