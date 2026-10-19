@@ -599,6 +599,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--no-touch-refine", action="store_true",
                     help="停用觸桌點重估, 保留教授的 y(x) 拋物線交點 (供對照)")
+    ap.add_argument("--no-scale-x-speed", action="store_true",
+                    help="擊球 x 速度門檻不依桌面大小縮放 (保留教授原值 250px/s, 供對照)")
     ap.add_argument("--no-kink", action="store_true",
                     help="停用折角落點補抓 (y 速度突然往上改變, 但沒有由正轉負)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -741,11 +743,17 @@ def analyze(raw: dict, args, de) -> tuple[dict, dict]:
     # y 速度底限依桌面在畫面中的大小縮放 (見 --min-y-speed-frac 說明)
     table_px_h = (float(np.median([q[:, 1].max() - q[:, 1].min() for q in quads_px]))
                   if quads_px else None)
+    y0 = de.MIN_Y_SPEED      # 教授原值 (40px/s), 供 x 方向套用同一縮放比例
     if args.min_y_speed is not None:
         de.MIN_Y_SPEED = args.min_y_speed
     elif table_px_h is not None:
         de.MIN_Y_SPEED = args.min_y_speed_frac * table_px_h
-    print(f"MIN_Y_SPEED = {de.MIN_Y_SPEED:.1f} px/s")
+    # 擊球的 x 速度門檻也是針對桌子佔滿畫面的取景 (250px/s); 轉播畫面同樣的球速像素小很多,
+    # 實例 London 0:56.46 擊球前 x 速度剛好 -250px/s 被擋掉, 擊球變成假落點。
+    # 與 y 用同一個縮放比例 (不另訂門檻)。
+    if not args.no_scale_x_speed:
+        de.MIN_X_SPEED = de.MIN_X_SPEED * de.MIN_Y_SPEED / y0
+    print(f"MIN_Y_SPEED = {de.MIN_Y_SPEED:.1f} px/s  MIN_X_SPEED = {de.MIN_X_SPEED:.1f} px/s")
 
     # 教授的演算法 (H=None: 映射改在外部用逐幀 H 做)
     track = de.build_track(frames, None, args.conf)

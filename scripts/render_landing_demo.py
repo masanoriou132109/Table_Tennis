@@ -36,7 +36,8 @@ from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noq
                           fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, apply_edge_buffer, classify_bounces,
+                                    DRIBBLE_NET_TOL, NET_HIT_CM, TABLE_W_CM, apply_edge_buffer,
+                                    classify_bounces,
                                     mark_net_dribbles, mark_serves)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 不算的落點: 洋紅 (不計入落點)
@@ -47,6 +48,8 @@ UNCOUNTED_TAG = {"own_side": "OWN SIDE", "second_bounce": "2ND BOUNCE", "net_edg
 # 以下 UI 尺寸以 720p 設計, 繪製時經 s()/fs()/lw() 放大到 1080p 輸出
 TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
 FLASH_SEC = 1.2                    # 新落點閃爍持續秒數
+HIT_COLOR = (255, 230, 0)          # 擊球: 青色
+HIT_SHOW_SEC = 0.6                 # 擊球標記顯示秒數
 MAP_SCALE = 1.1                    # cm → 小視窗像素 (720p)
 PAD = 16                           # 小視窗內邊距 (720p)
 STRIP_H = 20                       # 底部球軌跡時間軸高度 (720p)
@@ -159,8 +162,8 @@ def main() -> None:
     ap.add_argument("--table-backend", choices=("coreml", "torch"), default="coreml",
                     help="桌面模型執行方式: coreml (預設, Models/TableDetector.mlpackage) / torch (checkpoint)")
     ap.add_argument("--window", type=float, default=12.0, help="時間軸顯示秒數")
-    ap.add_argument("--parts", default="table,ball,strip,bounce,map",
-                    help="要顯示的元件,逗號分隔: table,ball,strip,bounce,map")
+    ap.add_argument("--parts", default="table,ball,strip,bounce,hit,map",
+                    help="要顯示的元件,逗號分隔: table,ball,strip,bounce,hit,map")
     ap.add_argument("--map-pos", default="br", choices=("br", "tr", "bl", "tl"),
                     help="小視窗位置: br=右下 tr=右上 bl=左下 tl=左上")
     ap.add_argument("--edge-alpha", type=float, default=0.3,
@@ -202,6 +205,9 @@ def main() -> None:
         dur = min(start + dur, args.clip[1]) - warm
         start, write_from = warm, args.clip[0]
         bounces = [e for e in bounces if args.clip[0] <= e["t"] <= args.clip[1]]
+    hits = [e for e in data["events"] if e.get("type") == "hit"]
+    if args.clip:
+        hits = [e for e in hits if args.clip[0] <= e["t"] <= args.clip[1]]
     # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
     track_by_frame = {p["frame"]: p for p in data.get("track", [])}
 
@@ -293,6 +299,23 @@ def main() -> None:
             if tag:
                 cv2.putText(canvas, tag, pt(x + 22, y - 10), FONT, fs(0.55), col, lw(2), cv2.LINE_AA)
 
+        # 擊球: 青色菱形 + 擊球方 (桌面座標 x 在網子哪一側); 離網 <= NET_HIT_CM 的
+        # 是規則當成「碰網」的擊球, 標 NET (不更新擊球方)
+        for e in (hits if "hit" in parts else []):
+            age = now - e["t"]
+            if not (0 <= age < HIT_SHOW_SEC):
+                continue
+            tb = e.get("table")
+            if tb is None:
+                tag = "HIT ?"
+            elif abs(tb[0] - TABLE_W_CM / 2) <= NET_HIT_CM:
+                tag = "HIT NET"
+            else:
+                tag = "HIT L" if tb[0] < TABLE_W_CM / 2 else "HIT R"
+            x, y = e["x"], e["y"]
+            cv2.drawMarker(canvas, pt(x, y), HIT_COLOR, cv2.MARKER_DIAMOND, s(26), lw(3), cv2.LINE_AA)
+            cv2.putText(canvas, tag, pt(x + 18, y + 26), FONT, fs(0.55), HIT_COLOR, lw(2), cv2.LINE_AA)
+
         if "strip" in parts:
             strip_right = origin[0] - 20 if args.map_pos in ("br", "bl") else w - 20
             draw_track_strip(canvas, history, now, args.window, strip_right)
@@ -302,7 +325,7 @@ def main() -> None:
 
     writer.release()
     cap.release()
-    print(f"示範影片輸出於 {out_path}  (落點 {len(bounces)} 個)")
+    print(f"示範影片輸出於 {out_path}  (落點 {len(bounces)} 個, 擊球 {len(hits)} 個)")
 
 
 if __name__ == "__main__":

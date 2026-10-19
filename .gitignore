@@ -46,3 +46,5 @@ external/
 
 # 落點分析第一階段快取 (球偵測/桌面模型原始輸出, 可由影片重建)
 data/cache/
+# regression.py --save-dir 的輸出 (可重建)
+data/regression/
