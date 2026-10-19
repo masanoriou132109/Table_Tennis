@@ -2,7 +2,7 @@
   "_說明": [
     "使用者肉眼確認過的落點/擊球案例 (scripts/regression.py 用)。時間 t 一律是原片秒數。",
     "expect: counted=桌上且算落點 / not_counted=沒有落點或有但不算 / bounce=有落點 (不管算不算) /",
-    "        no_bounce=附近不該有任何落點事件 / serve1, serve2=發球第 1/2 跳 / hit=附近要有擊球 / no_hit=附近不該有擊球 / net=附近要有碰網事件 /",
+    "        no_bounce=附近不該有任何落點事件 / serve1, serve2=發球第 1/2 跳 / hit=附近要有擊球 / no_hit=附近不該有擊球 / net / no_net=附近要有 / 不該有碰網事件 /",
     "        none_counted_in=t 到 t_end 之間沒有任何算數的落點",
     "side: 可選, 落點要在 L 或 R 半場。tol: 時間容差 (秒), 預設 0.1。",
     "status: pass=現在就該通過 / known_issue=已知錯誤, 使用者說可忽略 / target=現在錯, 預期修擊球偵測後修好"
@@ -65,6 +65,19 @@
     {"clip": "london_2805", "t": 1702.22, "expect": "not_counted", "status": "pass", "source": "10-12 使用者: 確實是碰網"},
     {"clip": "london_2805", "t": 1702.64, "expect": "counted", "status": "pass", "source": "10-12 碰網過網落在端線附近"},
     {"clip": "london_2805", "t": 1703.18, "expect": "counted", "side": "L", "status": "pass", "source": "10-12 使用者: 落點在桌內離端線一段距離"},
+
+    {"clip": "london_2805", "t": 1699.68, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1700.24, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1700.92, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1701.24, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1701.60, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1701.92, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1702.94, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1703.24, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1703.82, "expect": "hit", "status": "pass", "source": "10-19 使用者看擊球 demo: 正確"},
+    {"clip": "london_2805", "t": 1704.18, "expect": "no_hit", "status": "known_issue", "source": "10-19 使用者: 不是擊球, 疑似地上白色 logo 被偵測成球 (信心 0.37), 球偵測問題"},
+    {"clip": "london_2805", "t": 1704.58, "expect": "no_hit", "status": "known_issue", "source": "同上"},
+    {"clip": "london_2805", "t": 1704.62, "expect": "no_net", "status": "known_issue", "source": "同上"},
 
     {"clip": "lin_0217", "t": 148.50, "expect": "serve1", "status": "pass", "source": "10-18 使用者: serve 1 有偵測到 (位置 y 偏很多, 不驗位置)"},
     {"clip": "lin_0217", "t": 151.60, "expect": "counted", "status": "pass", "source": "10-16 使用者指出 151.61: 沒有最低點的落點 (折角)"},

@@ -63,10 +63,10 @@ def check(case: dict, events: list[dict]) -> tuple[bool, str]:
     if exp == "none_counted_in":
         bad = [e for e in bounces if t - tol <= e["t"] <= case["t_end"] + tol and is_counted(e)]
         return not bad, ("沒有算數的落點" if not bad else ", ".join(label(e) for e in bad))
-    if exp == "net":
+    if exp in ("net", "no_net"):
         n = near(nets)
         h = near(hits)
-        return n is not None, (label(n) if n else "沒有碰網") + (f"; 附近 {label(h)}" if h else "")
+        return (n is not None) == (exp == "net"), (label(n) if n else "沒有碰網") + (f"; 附近 {label(h)}" if h else "")
     if exp in ("hit", "no_hit"):
         h = near(hits)
         ok = (h is not None) == (exp == "hit")
