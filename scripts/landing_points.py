@@ -238,7 +238,7 @@ def detect_kink_bounces(track: list[dict], events: list[dict], table_px_h: float
     """
     k = KINK_N
     thr = -KINK_DV_FRAC * table_px_h
-    busy = [e["t"] for e in events if e.get("type") in ("hit", "bounce")]
+    busy = [e["t"] for e in events if e.get("type") in ("hit", "net", "bounce")]
 
     def vel(seg):
         return np.polyfit([p["t"] for p in seg], [p["y"] for p in seg], 1)[0]
@@ -353,7 +353,7 @@ def mark_net_dribbles(events: list[dict], max_dt: float = DRIBBLE_MAX_DT,
     prev = None
     n = 0
     for ev in sorted(events, key=lambda e: e["t"]):
-        if ev.get("type") == "hit":
+        if ev.get("type") in ("hit", "net"):   # 碰網原本也是 hit 事件, 保持同樣行為
             prev = None
             continue
         if ev.get("type") != "bounce":
@@ -406,7 +406,7 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
             continue
         nxt, hit_between = None, False
         for f in evs[i + 1:]:
-            if f.get("type") == "hit":
+            if f.get("type") in ("hit", "net"):
                 hit_between = True
             elif f.get("type") == "bounce" and f.get("zone"):
                 nxt = f
@@ -426,7 +426,7 @@ def mark_serves(events: list[dict], gap: float = SERVE_GAP,
 
 
 NET_EDGE_CM = 12.0     # 離網 <= 此距離的落點: 分不出碰網/落桌, 也分不出哪一側
-NET_HIT_CM = 25.0      # 離網 <= 此距離的「擊球」: 是球碰網造成的方向反轉, 不是球員擊球
+NET_HIT_CM = 25.0      # 離網 <= 此距離的桌外落點: 是球打到網帶 (網帶高於桌面, 透視後映射到桌外)
 
 
 def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
@@ -441,14 +441,14 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
       dead_ball     死球後到下一回合開始前的落點 (球員拍球、撿球、球在滾)
       net_dribble   沒偵測到擊球、不知道擊球方時, 退回 mark_net_dribbles 的判斷
     發球第 1 跳例外 (本來就落在發球方), 並以它決定發球方。
-    擊球位置在網邊 (<= net_hit) 視為碰網, 不更新擊球方。只考慮桌面上的落點 (有分區)。
+    碰網 (教授 detect_events 的 "net" 事件: 網邊 25cm 內的 x 反轉) 不更新擊球方。只考慮桌面上的落點 (有分區)。
 
     依據 (London 2026): 09:47 / 10:07 / 10:25 三次掛網都是「擊球後第一跳落在擊球方」,
     其中 10:07 掛網後彈到近端線才落下 → 不能用離網距離判斷掛網;
     18:00 碰網那下 (離網 8cm) 被當成落點, 真正的第一跳 (離網 15cm) 反而被當連彈。
     碰網一拍只會發生一次 (Lin vs Moregard 02:32): 02:32.03 打到網帶 (離網附近的桌外事件),
     02:32.47 接球方第一跳被算到網子另一側 0.5cm → 網邊; 若它不佔第一跳, 第二、三跳
-    會依序遞補成「第一跳」。碰網的證據: 網邊 (<= net_hit) 的擊球, 或網邊的桌外落點。
+    會依序遞補成「第一跳」。碰網的證據: "net" 事件, 或網邊 (<= net_hit) 的桌外落點。
     回傳不算的落點數。
     """
     net_x = TABLE_W_CM / 2
@@ -459,14 +459,12 @@ def classify_bounces(events: list[dict], gap: float = SERVE_GAP,
     prev_t = None
     n = 0
     for e in sorted(events, key=lambda e: e["t"]):
+        if e.get("type") == "net":
+            net_seen = True
+            continue
         if e.get("type") == "hit":
             tb = e.get("table")
-            e.pop("net_touch", None)
             if not tb:
-                continue
-            if abs(tb[0] - net_x) <= net_hit:
-                e["net_touch"] = True
-                net_seen = True
                 continue
             if not dead:
                 hitter, counted, net_seen = ("L" if tb[0] < net_x else "R"), False, False
@@ -757,17 +755,18 @@ def analyze(raw: dict, args, de) -> tuple[dict, dict]:
 
     # 教授的演算法 (H=None: 映射改在外部用逐幀 H 做)
     track = de.build_track(frames, None, args.conf)
-    # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError
-    events = [] if not track else de.detect_events(track, None)[0]
-    n_kink = (0 if args.no_kink or table_px_h is None
-              else detect_kink_bounces(track, events, table_px_h))
-    n_touch = 0 if args.no_touch_refine else refine_touch_points(events)
-
     def nearest_H(t: float):
         if not H_by_frame:
             return None
         fi = min(H_by_frame, key=lambda k: abs(k / fps - t))
         return H_by_frame[fi] if abs(fi / fps - t) <= 0.2 else None
+
+    # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError。
+    # h_at: 逐幀 H, 讓他判斷網邊的 x 反轉是碰網 ("net") 而非擊球
+    events = [] if not track else de.detect_events(track, None, h_at=nearest_H)[0]
+    n_kink = (0 if args.no_kink or table_px_h is None
+              else detect_kink_bounces(track, events, table_px_h))
+    n_touch = 0 if args.no_touch_refine else refine_touch_points(events)
 
     n_mapped = 0
     for ev in events:
@@ -819,10 +818,11 @@ def main() -> None:
 
     bounces = [e for e in events if e.get("type") == "bounce"]
     hits = [e for e in events if e.get("type") == "hit"]
+    nets = [e for e in events if e.get("type") == "net"]
     n_table, n_frames = st["n_table"], st["n_frames"]
     print(f"影格 {n_frames}  有桌面 {n_table} ({n_table/max(n_frames,1):.0%})  "
           f"球軌跡點 {st['n_track']}  裙板遮罩擋掉 {st['n_apron']} 個偵測")
-    print(f"事件: 擊球 {len(hits)}, 落點 {len(bounces)} (其中 {st['n_mapped']} 個成功映射到桌面座標, "
+    print(f"事件: 擊球 {len(hits)}, 碰網 {len(nets)}, 落點 {len(bounces)} (其中 {st['n_mapped']} 個成功映射到桌面座標, "
           f"{st['n_dribble']} 個標為觸網連續彈跳)")
     print(f"發球: 兩跳都抓到 {st['n_serve'][1]} 次, 只抓到一跳/無法確定 {st['n_serve']['?']} 次")
     print(f"不算的落點 (掛網/過網彈回/連彈/網邊/死球): {st['n_uncounted']} 個")

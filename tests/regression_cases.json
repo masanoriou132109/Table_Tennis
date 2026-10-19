@@ -2,7 +2,7 @@
   "_說明": [
     "使用者肉眼確認過的落點/擊球案例 (scripts/regression.py 用)。時間 t 一律是原片秒數。",
     "expect: counted=桌上且算落點 / not_counted=沒有落點或有但不算 / bounce=有落點 (不管算不算) /",
-    "        no_bounce=附近不該有任何落點事件 / serve1, serve2=發球第 1/2 跳 / hit=附近要有擊球 / no_hit=附近不該有擊球 /",
+    "        no_bounce=附近不該有任何落點事件 / serve1, serve2=發球第 1/2 跳 / hit=附近要有擊球 / no_hit=附近不該有擊球 / net=附近要有碰網事件 /",
     "        none_counted_in=t 到 t_end 之間沒有任何算數的落點",
     "side: 可選, 落點要在 L 或 R 半場。tol: 時間容差 (秒), 預設 0.1。",
     "status: pass=現在就該通過 / known_issue=已知錯誤, 使用者說可忽略 / target=現在錯, 預期修擊球偵測後修好"
@@ -46,9 +46,9 @@
     {"clip": "london_0000", "t": 59.40, "expect": "no_bounce", "status": "pass", "source": "10-10 使用者: DHS logo 附近不該出現的 off-table"},
 
     {"clip": "london_0935", "t": 587.36, "expect": "not_counted", "status": "pass", "source": "10-10 #1 掛網落在擊球方"},
-    {"clip": "london_0935", "t": 587.32, "expect": "no_hit", "status": "known_issue", "source": "10-19 使用者: 掛網沒過後落在桌上 (是落點), MIN_X_SPEED 縮放後被判成 HIT NET; 計數結果不受影響"},
+    {"clip": "london_0935", "t": 587.32, "expect": "bounce", "status": "known_issue", "source": "10-19 使用者: 掛網沒過後落在桌上 (是落點), MIN_X_SPEED 縮放後被判成碰網; 計數結果不受影響"},
     {"clip": "london_0935", "t": 587.64, "expect": "not_counted", "status": "pass", "source": "10-10 #1"},
-    {"clip": "london_0935", "t": 607.28, "expect": "no_hit", "status": "target", "source": "10-10 #2 碰網被判成擊球 (目前靠 NET_HIT_CM 在下游當成碰網)"},
+    {"clip": "london_0935", "t": 607.28, "expect": "net", "status": "pass", "source": "10-10 #2 碰網 (原本被判成擊球); 10-19 碰網判斷移進教授 detect_events 後為 net 事件"},
     {"clip": "london_0935", "t": 603.72, "tol": 0.2, "expect": "no_hit", "status": "known_issue", "source": "10-19 使用者: 非進行中, 側拍鏡頭的 logo/顏色被偵測成球 (本幀無桌面, 借用 0.5s 內的桌面)"},
     {"clip": "london_0935", "t": 607.90, "expect": "not_counted", "status": "pass", "source": "10-10 #2 掛網後落在擊球方"},
     {"clip": "london_0935", "t": 608.98, "expect": "not_counted", "status": "pass", "source": "10-10 #2 球員拍球"},
@@ -73,7 +73,7 @@
     {"clip": "lin_0217", "t": 153.60, "expect": "not_counted", "status": "pass", "source": "10-12 不該算; 10-18 基準為 second_bounce (因 153.27 被誤算才判對), 使用者決定列為一般案例"},
 
     {"clip": "webm_0000", "t": 97.32, "expect": "not_counted", "status": "pass", "source": "10-04 使用者: 掛網沒過, 落在擊球方網邊"},
-    {"clip": "webm_0000", "t": 97.30, "expect": "hit", "status": "pass", "source": "10-19 使用者: 撞網後馬上彈到桌面, 記成 HIT NET 正確"},
+    {"clip": "webm_0000", "t": 97.30, "expect": "net", "status": "pass", "source": "10-19 使用者: 撞網後馬上彈到桌面, 記成 HIT NET (碰網) 正確"},
     {"clip": "webm_0000", "t": 97.72, "expect": "not_counted", "status": "pass", "source": "10-04"},
     {"clip": "webm_0000", "t": 98.10, "expect": "not_counted", "status": "pass", "source": "10-04"}
   ]

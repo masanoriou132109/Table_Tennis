@@ -39,8 +39,8 @@ def is_counted(e: dict) -> bool:
 
 
 def label(e: dict) -> str:
-    if e["type"] == "hit":
-        return f"擊球 {e['t']:.2f}"
+    if e["type"] in ("hit", "net"):
+        return f"{'擊球' if e['type'] == 'hit' else '碰網'} {e['t']:.2f}"
     s = f"落點 {e['t']:.2f} {e.get('zone') or '桌外'}"
     if e.get("serve"):
         s += f" SERVE {e['serve']}"
@@ -54,6 +54,7 @@ def check(case: dict, events: list[dict]) -> tuple[bool, str]:
     t, tol, exp = case["t"], case.get("tol", DEFAULT_TOL), case["expect"]
     bounces = [e for e in events if e["type"] == "bounce"]
     hits = [e for e in events if e["type"] == "hit"]
+    nets = [e for e in events if e["type"] == "net"]
 
     def near(evs, t0=t, tl=tol):
         c = [e for e in evs if abs(e["t"] - t0) <= tl + 1e-6]
@@ -62,6 +63,10 @@ def check(case: dict, events: list[dict]) -> tuple[bool, str]:
     if exp == "none_counted_in":
         bad = [e for e in bounces if t - tol <= e["t"] <= case["t_end"] + tol and is_counted(e)]
         return not bad, ("沒有算數的落點" if not bad else ", ".join(label(e) for e in bad))
+    if exp == "net":
+        n = near(nets)
+        h = near(hits)
+        return n is not None, (label(n) if n else "沒有碰網") + (f"; 附近 {label(h)}" if h else "")
     if exp in ("hit", "no_hit"):
         h = near(hits)
         ok = (h is not None) == (exp == "hit")

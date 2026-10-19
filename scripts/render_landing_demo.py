@@ -36,7 +36,7 @@ from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noq
                           fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import load_table_model, predict  # noqa: E402
 from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, NET_HIT_CM, TABLE_W_CM, apply_edge_buffer,
+                                    DRIBBLE_NET_TOL, TABLE_W_CM, apply_edge_buffer,
                                     classify_bounces,
                                     mark_net_dribbles, mark_serves)
 
@@ -205,7 +205,7 @@ def main() -> None:
         dur = min(start + dur, args.clip[1]) - warm
         start, write_from = warm, args.clip[0]
         bounces = [e for e in bounces if args.clip[0] <= e["t"] <= args.clip[1]]
-    hits = [e for e in data["events"] if e.get("type") == "hit"]
+    hits = [e for e in data["events"] if e.get("type") in ("hit", "net")]
     if args.clip:
         hits = [e for e in hits if args.clip[0] <= e["t"] <= args.clip[1]]
     # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
@@ -299,17 +299,17 @@ def main() -> None:
             if tag:
                 cv2.putText(canvas, tag, pt(x + 22, y - 10), FONT, fs(0.55), col, lw(2), cv2.LINE_AA)
 
-        # 擊球: 青色菱形 + 擊球方 (桌面座標 x 在網子哪一側); 離網 <= NET_HIT_CM 的
-        # 是規則當成「碰網」的擊球, 標 NET (不更新擊球方)
+        # 擊球: 青色菱形 + 擊球方 (桌面座標 x 在網子哪一側);
+        # 碰網 (教授 detect_events 的 "net" 事件, 網邊的 x 反轉) 標 NET
         for e in (hits if "hit" in parts else []):
             age = now - e["t"]
             if not (0 <= age < HIT_SHOW_SEC):
                 continue
             tb = e.get("table")
-            if tb is None:
+            if e["type"] == "net":
+                tag = "NET"
+            elif tb is None:
                 tag = "HIT ?"
-            elif abs(tb[0] - TABLE_W_CM / 2) <= NET_HIT_CM:
-                tag = "HIT NET"
             else:
                 tag = "HIT L" if tb[0] < TABLE_W_CM / 2 else "HIT R"
             x, y = e["x"], e["y"]
@@ -325,7 +325,7 @@ def main() -> None:
 
     writer.release()
     cap.release()
-    print(f"示範影片輸出於 {out_path}  (落點 {len(bounces)} 個, 擊球 {len(hits)} 個)")
+    print(f"示範影片輸出於 {out_path}  (落點 {len(bounces)} 個, 擊球+碰網 {len(hits)} 個)")
 
 
 if __name__ == "__main__":
