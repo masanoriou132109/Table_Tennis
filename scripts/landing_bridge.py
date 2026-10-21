@@ -28,17 +28,13 @@ from scripts.landing_points import (DEFAULT_PROF_REPO, TABLE_H_CM, TABLE_W_CM,  
 from src.video_io import PROC_H, PROC_W  # noqa: E402
 
 _de = None
-_speed0 = None
 
 
 def _prof_module():
     """教授模組只載入一次。"""
-    global _de, _speed0
+    global _de
     if _de is None:
         _de = load_prof_module(Path(DEFAULT_PROF_REPO))
-        _speed0 = (_de.MIN_Y_SPEED, _de.MIN_X_SPEED)
-    # analyze_frames 會依桌面大小改速度門檻; 每次都從教授原值開始
-    _de.MIN_Y_SPEED, _de.MIN_X_SPEED = _speed0
     return _de
 
 

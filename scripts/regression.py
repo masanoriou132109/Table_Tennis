@@ -108,7 +108,6 @@ def main() -> None:
 
     defaults = parser.parse_args(["_"])
     de = load_prof_module(Path(defaults.prof_repo))
-    min_speed0 = (de.MIN_Y_SPEED, de.MIN_X_SPEED)
 
     rows = []
     for name, c in clips.items():
@@ -116,8 +115,6 @@ def main() -> None:
         if opts.refresh_cache:
             argv.append("--refresh-cache")
         args = parser.parse_args(argv)
-        # analyze 會依桌面大小改 de.MIN_Y_SPEED / MIN_X_SPEED; 每個片段從教授原值開始, 不受上一個片段影響
-        de.MIN_Y_SPEED, de.MIN_X_SPEED = min_speed0
         result, _ = analyze(load_or_run_detectors(args), args, de)
         if opts.save_dir:
             out = Path(opts.save_dir) / f"landing_{name}.json"

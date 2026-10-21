@@ -554,12 +554,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="場外閘門寬容度 (cm,超出桌面此距離的球偵測視為誤判)。"
                          "預設 0.4x 桌長 = 110cm;教授原值 700 是舊的 500 單位空間,"
                          "對轉播畫面幾乎不過濾")
-    ap.add_argument("--min-y-speed-frac", type=float, default=0.12,
-                    help="落點 y 速度噪音底限,以「桌面在畫面中的高度」的倍率表示 (每秒)。"
-                         "教授原值 40px/s 是針對桌子佔滿畫面的取景;轉播畫面桌高僅約 130px,"
-                         "同樣的物理反彈像素速度小 4~5 倍,固定 px 門檻會誤殺真實落點")
-    ap.add_argument("--min-y-speed", type=float, default=None,
-                    help="直接指定 y 速度底限 (px/s),覆蓋 --min-y-speed-frac")
     ap.add_argument("--dribble-max-dt", type=float, default=DRIBBLE_MAX_DT,
                     help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
     ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
@@ -570,8 +564,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="停用球桌前裙板遮罩 (供對照)")
     ap.add_argument("--no-touch-refine", action="store_true",
                     help="停用觸桌點重估, 保留教授的 y(x) 拋物線交點 (供對照)")
-    ap.add_argument("--no-scale-x-speed", action="store_true",
-                    help="擊球 x 速度門檻不依桌面大小縮放 (保留教授原值 250px/s, 供對照)")
     ap.add_argument("--no-kink", action="store_true",
                     help="停用折角落點補抓 (y 速度突然往上改變, 但沒有由正轉負)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -671,7 +663,7 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
     # 我們的 [FL,FR,NR,NL] → 他的 [NL,NR,FR,FL] (互為反序)
     H_by_frame = {fi: de.build_homography(np.asarray(q)[::-1].astype(np.float32))
                   for fi, q in quad_by_frame.items()}
-    quads_px = [np.asarray(q) for q in quad_by_frame.values()]   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
+    quads_px = [np.asarray(q) for q in quad_by_frame.values()]   # 供速度門檻依桌面畫面大小縮放
     n_table = len(quad_by_frame)
 
     # 球桌前裙板遮罩。全部幀處理完再做, 才能往前「和往後」找最近的桌面框:
@@ -716,20 +708,11 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
                 kept.append(d)
         fr["dets"] = kept
 
-    # y 速度底限依桌面在畫面中的大小縮放 (見 --min-y-speed-frac 說明)
+    # 桌面在畫面中的高度 (px): 教授 detect_events 用它縮放速度門檻 (轉播畫面桌子小), 折角落點也用
     table_px_h = (float(np.median([q[:, 1].max() - q[:, 1].min() for q in quads_px]))
                   if quads_px else None)
-    y0 = de.MIN_Y_SPEED      # 教授原值 (40px/s), 供 x 方向套用同一縮放比例
-    if args.min_y_speed is not None:
-        de.MIN_Y_SPEED = args.min_y_speed
-    elif table_px_h is not None:
-        de.MIN_Y_SPEED = args.min_y_speed_frac * table_px_h
-    # 擊球的 x 速度門檻也是針對桌子佔滿畫面的取景 (250px/s); 轉播畫面同樣的球速像素小很多,
-    # 實例 London 0:56.46 擊球前 x 速度剛好 -250px/s 被擋掉, 擊球變成假落點。
-    # 與 y 用同一個縮放比例 (不另訂門檻)。
-    if not args.no_scale_x_speed:
-        de.MIN_X_SPEED = de.MIN_X_SPEED * de.MIN_Y_SPEED / y0
-    print(f"MIN_Y_SPEED = {de.MIN_Y_SPEED:.1f} px/s  MIN_X_SPEED = {de.MIN_X_SPEED:.1f} px/s")
+    min_x, min_y = de.speed_floors(table_px_h)
+    print(f"速度門檻 (依桌高 {table_px_h or 0:.0f}px 縮放): 擊球 x {min_x:.1f} px/s, 落點 y {min_y:.1f} px/s")
 
     # 教授的演算法 (H=None: 映射改在外部用逐幀 H 做)
     track = de.build_track(frames, None, args.conf)
@@ -741,7 +724,7 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
 
     # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError。
     # h_at: 逐幀 H, 讓他判斷網邊的 x 反轉是碰網 ("net") 而非擊球
-    events = [] if not track else de.detect_events(track, None, h_at=nearest_H)[0]
+    events = [] if not track else de.detect_events(track, None, h_at=nearest_H, table_px_h=table_px_h)[0]
     n_kink = (0 if args.no_kink or table_px_h is None
               else detect_kink_bounces(track, events, table_px_h))
     n_touch = 0 if args.no_touch_refine else refine_touch_points(events)
