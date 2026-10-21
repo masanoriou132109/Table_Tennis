@@ -48,9 +48,7 @@ from src.tracker import TableTracker  # noqa: E402
 from src.video_io import PROC_H, PROC_W, check_aspect, to_proc  # noqa: E402
 from scripts.infer_video import load_table_model, predict  # noqa: E402
 
-# ITTF 正規球桌尺寸 (cm)。教授原本 detect_events.py 寫 500x240 (長寬比 2.08),
-# 與真實球桌 (274/152.5 = 1.80) 不符 — 他已確認是筆誤。
-# 分區判定用的是比例,不受影響;但落點座標的物理意義與「離邊線幾公分」等量測需要正確尺寸。
+# ITTF 正規球桌尺寸 (cm), 與教授 detect_events.py 的 TABLE_W/H 相同 (原本 500x240 是筆誤, 已在他那邊改正)。
 TABLE_W_CM, TABLE_H_CM = 274.0, 152.5
 
 
@@ -61,9 +59,9 @@ def load_prof_module(repo: Path):
         raise FileNotFoundError(f"找不到 {tools/'detect_events.py'}")
     sys.path.insert(0, str(tools))
     import detect_events as de  # noqa: E402
-    # 修正桌面尺寸 (教授確認原 500x240 為筆誤)。他的 build_homography / zone_of
-    # 都讀模組全域變數,所以在此覆寫即可讓整條管線使用正確尺寸,無需改他的檔案。
-    de.TABLE_W, de.TABLE_H = TABLE_W_CM, TABLE_H_CM
+    # 桌面尺寸 (274x152.5cm) 已改在教授的 detect_events.py 裡; 版本不對時直接報錯
+    assert (de.TABLE_W, de.TABLE_H) == (TABLE_W_CM, TABLE_H_CM), \
+        f"教授的 detect_events.py 桌面尺寸是 {de.TABLE_W}x{de.TABLE_H}, 需要 table-detection 分支的版本"
     return de
 
 
