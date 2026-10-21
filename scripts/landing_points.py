@@ -100,86 +100,6 @@ class BallModel:
         return f"BallModel({self.path.name}, {self.arch} @ {self.imgsz})"
 
 
-TOUCH_MAX_GAP_F = 3    # 夾住觸桌點的兩個觀察點最多相隔幾幀 (超過就保留教授的估計)
-TOUCH_SIDE_N = 4       # 觸桌點兩側各用幾個點擬合 y(t)
-TOUCH_SIDE_DT = 0.15   # s; 擬合點離夾住的觀察點最遠多久
-
-
-def _fit_t(pts: list[dict], key: str, deg: int):
-    ts = np.array([p["t"] for p in pts])
-    vs = np.array([p[key] for p in pts])
-    return np.polyfit(ts - ts[0], vs, min(deg, len(pts) - 1)), ts[0]
-
-
-def _eval_t(fit, t: float) -> float:
-    p, t0 = fit
-    return float(np.polyval(p, t - t0))
-
-
-def refine_touch_points(events: list[dict]) -> int:
-    """用時間參數化重估觸桌點 (ev["x"], ev["y"]), 教授的估計存在 ev["xy_prof"]。
-
-    教授的 refine_bounce 用 y(x) 拋物線交點, 兩種情況會偏:
-      - 斜率視窗選到的 V 點不是最低點, 觸桌後的點被算進入射段 (London 28:23.18, 偏 46px)
-      - 球幾乎垂直落下, y(x) 病態 (webm 97.32, 偏 9px → 落點被映射到網子另一側)
-    做法: V 點附近 ±2 點內找觀察到的最低點, 觸桌一定在它與前一點或後一點之間。
-    兩種夾法都試: 兩側各擬合 y(t), 在兩個觀察點的時間區間內找交點 t*,
-    x 用兩點線性內插 → 結果不會跑出這兩個觀察點之間。取兩段 y(t) 最接近的夾法。
-    偵測斷掉 (夾住的兩點相隔 > TOUCH_MAX_GAP_F 幀) 或點不夠時保留教授的估計。
-    連續相同位置的點 (重複幀影片, 例如 25fps 補成 50fps) 先去掉, 否則 y(t) 會被拉平。
-    回傳改用新估計的數量。
-    """
-    n = 0
-    for e in events:
-        if e.get("type") != "bounce" or "xy_prof" in e:
-            continue
-        legs = e.get("debug") or {}
-        l1, l2 = legs.get("leg1_points") or [], legs.get("leg2_points") or []
-        if not l1 or not l2:
-            continue
-        by_frame = {p["frame"]: p for p in l1 + l2}
-        pts: list[dict] = []
-        for p in sorted(by_frame.values(), key=lambda p: p["t"]):
-            if pts and abs(p["x"] - pts[-1]["x"]) < 0.5 and abs(p["y"] - pts[-1]["y"]) < 0.5:
-                continue
-            pts.append(p)
-        vi = min(range(len(pts)), key=lambda i: abs(pts[i]["frame"] - l1[-1]["frame"]))
-        if e.get("kink"):
-            m = vi            # 折角落點沒有 y 最低點, 直接夾住折角那一點
-        else:
-            m = max(range(max(0, vi - 2), min(len(pts) - 1, vi + 2) + 1), key=lambda i: pts[i]["y"])
-
-        best = None   # (y(t) 差距, x, y)
-        for a in (m - 1, m):                  # 觸桌在 pts[a] 與 pts[a+1] 之間
-            if a < 0 or a + 1 >= len(pts):
-                continue
-            P, Q = pts[a], pts[a + 1]
-            if Q["frame"] - P["frame"] > TOUCH_MAX_GAP_F:
-                continue
-            A = [p for p in pts[max(0, a - TOUCH_SIDE_N + 1):a + 1] if P["t"] - p["t"] <= TOUCH_SIDE_DT]
-            B = [p for p in pts[a + 1:a + 1 + TOUCH_SIDE_N] if p["t"] - Q["t"] <= TOUCH_SIDE_DT]
-            if len(A) < 2 or len(B) < 2:
-                continue
-            yA, yB = _fit_t(A, "y", 2), _fit_t(B, "y", 2)
-            ts = np.linspace(P["t"], Q["t"], 101)
-            gap = np.abs([_eval_t(yA, t) - _eval_t(yB, t) for t in ts])
-            k = int(np.argmin(gap))
-            f = (ts[k] - P["t"]) / (Q["t"] - P["t"])
-            x = P["x"] + f * (Q["x"] - P["x"])
-            # y 外插可能爆掉: 限制在兩點之間到「低於較低點一個兩點距離」以內
-            y = (_eval_t(yA, ts[k]) + _eval_t(yB, ts[k])) / 2
-            y_hi = max(P["y"], Q["y"]) + float(np.hypot(Q["x"] - P["x"], Q["y"] - P["y"]))
-            y = min(max(y, min(P["y"], Q["y"])), y_hi)
-            if best is None or gap[k] < best[0]:
-                best = (float(gap[k]), float(x), float(y))
-        if best is None:
-            continue
-        e["xy_prof"] = [e["x"], e["y"], e["method"]]
-        e["x"], e["y"], e["method"] = best[1], best[2], "touch-t"
-        n += 1
-    return n
-
-
 EDGE_BUFFER_CM = 5.0   # 超出桌邊 <= 此距離的落點仍算桌上 (擦邊球)
 
 
@@ -666,10 +586,12 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
     # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError。
     # h_at: 逐幀 H, 讓他判斷網邊的 x 反轉是碰網 ("net") 而非擊球
     # kink: 他也補抓沒有 y 最低點的落點 (球往遠端飛, y 速度一直 <= 0 但觸桌時突然往上變)
+    # touch_t: 觸桌點改用 y(t) 交點 (他原本 y(x) 拋物線的估計留在 xy_prof)
     events = [] if not track else de.detect_events(track, None, h_at=nearest_H, table_px_h=table_px_h,
-                                                   kink=not args.no_kink)[0]
+                                                   kink=not args.no_kink,
+                                                   touch_t=not args.no_touch_refine)[0]
     n_kink = sum(1 for e in events if e.get("kink"))
-    n_touch = 0 if args.no_touch_refine else refine_touch_points(events)
+    n_touch = sum(1 for e in events if e.get("method") == "touch-t")
 
     n_mapped = 0
     for ev in events:
