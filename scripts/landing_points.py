@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """端到端落點分析: 本專案的逐幀桌角 + PingPongTracker 的球偵測與事件演算法。
 
-串接方式 (完全不修改教授的程式碼):
+串接方式:
   1. 本專案 TableKeypointNet + TableTracker → 每幀桌面 4 角 → 每幀 homography
   2. 教授的球偵測 Core ML (預設 RF-DETR Large, Models/BallDetector_rfdetr_20260930.mlpackage;
      --ball-model 可換回 YOLO26 等其他匯出, 格式自動判斷) → 每幀球偵測
-  3. 教授 Tools/detect_events.py 的 build_track / detect_events (傳 H=None)
+  3. 教授 Tools/detect_events.py 的 build_track / detect_events (傳 H=None, 逐幀 H 用 h_at,
+     桌高用 table_px_h)。需要教授 repo table-detection 分支的版本: 桌面 cm、速度門檻縮放、
+     方向先過濾再去抖動、碰網事件、折角落點、y(t) 觸桌點、記錄工具的分區編號都改在他那邊。
   4. 落點事件用「該事件時刻的那一幀」的 H 映射成桌面座標與分區
+  5. 本專案的落點規則 (擦邊緩衝、連彈、發球配對、以擊球為基準判定算不算)
 
 為何要逐幀 H: 他原本的 --corners 是整支影片一組固定角點,只適用固定機位;
 轉播有 zoom/pan 時固定角點會讓落點映射失準。本腳本改為逐幀,
