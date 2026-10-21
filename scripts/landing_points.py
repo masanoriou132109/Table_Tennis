@@ -65,44 +65,6 @@ def load_prof_module(repo: Path):
     return de
 
 
-def patch_debounce(de):
-    """修正: find_reversals 的去抖動不分方向,落點會被附近的「頂點」壓過。
-
-    他的流程是「先去抖動(只留最強的)→ 再過濾方向」。球的最高點 (升→降) 速度通常
-    比反彈 (降→升) 大,於是在 EVENT_DEBOUNCE 窗內把真正的落點吸收掉,方向過濾後
-    整個群集變成空的。實測 Doha 有 3 個落點因此消失。
-
-    改為「先過濾方向 → 再去抖動」。只影響 key=='y' (落點);擊球 (key=='x') 不變。
-    """
-    orig = de.find_reversals
-
-    def find_reversals_dir_first(run, key, min_speed):
-        if key != "y":
-            return orig(run, key, min_speed)
-        cands = []
-        for i in range(1, len(run) - 1):
-            bf, af = de.windowed_slope(run, i, key)
-            if bf is None or af is None:
-                continue
-            if bf > 0 > af and abs(bf) > min_speed and abs(af) > min_speed:
-                cands.append((i, abs(bf) + abs(af)))
-        kept = []
-        for i, strength in cands:
-            if kept:
-                j = kept[-1][0]
-                close_t = run[i]["t"] - run[j]["t"] < de.EVENT_DEBOUNCE
-                close_p = np.hypot(run[i]["x"] - run[j]["x"],
-                                   run[i]["y"] - run[j]["y"]) < de.EVENT_DEBOUNCE_DIST
-                if close_t and close_p:
-                    if strength > kept[-1][1]:
-                        kept[-1] = (i, strength)
-                    continue
-            kept.append((i, strength))
-        return [i for i, _ in kept]
-
-    de.find_reversals = find_reversals_dir_first
-
-
 class BallModel:
     """Core ML 球偵測器 + 其輸出格式。支援教授的兩種匯出:
 
@@ -606,8 +568,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="觸網連續彈跳: 前一跳離網子 <= 此距離 (cm) 時不檢查同側")
     ap.add_argument("--no-apron-mask", action="store_true",
                     help="停用球桌前裙板遮罩 (供對照)")
-    ap.add_argument("--no-fix-debounce", action="store_true",
-                    help="停用去抖動修正 (保留教授原行為, 供對照)")
     ap.add_argument("--no-touch-refine", action="store_true",
                     help="停用觸桌點重估, 保留教授的 y(x) 拋物線交點 (供對照)")
     ap.add_argument("--no-scale-x-speed", action="store_true",
@@ -845,8 +805,6 @@ def summarize_landings(result: dict) -> dict:
 def main() -> None:
     args = build_parser().parse_args()
     de = load_prof_module(Path(args.prof_repo))
-    if not args.no_fix_debounce:
-        patch_debounce(de)
     raw = load_or_run_detectors(args)
     result, st = analyze(raw, args, de)
     events = result["events"]

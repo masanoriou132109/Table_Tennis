@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.landing_points import (analyze, build_parser, load_or_run_detectors,  # noqa: E402
-                                    load_prof_module, patch_debounce)
+                                    load_prof_module)
 
 CASES = PROJECT_ROOT / "tests" / "regression_cases.json"
 DEFAULT_TOL = 0.1   # s
@@ -106,11 +106,8 @@ def main() -> None:
     clips = {k: v for k, v in spec["clips"].items() if not opts.clip or k in opts.clip}
     parser = build_parser()
 
-    # 教授模組只載入/修補一次 (import 有快取, 重複 patch_debounce 會一層層包起來)
     defaults = parser.parse_args(["_"])
     de = load_prof_module(Path(defaults.prof_repo))
-    if not defaults.no_fix_debounce:
-        patch_debounce(de)
     min_speed0 = (de.MIN_Y_SPEED, de.MIN_X_SPEED)
 
     rows = []

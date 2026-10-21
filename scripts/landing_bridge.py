@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.landing_points import (DEFAULT_PROF_REPO, TABLE_H_CM, TABLE_W_CM,  # noqa: E402
-                                    analyze_frames, build_parser, load_prof_module, patch_debounce)
+                                    analyze_frames, build_parser, load_prof_module)
 from src.video_io import PROC_H, PROC_W  # noqa: E402
 
 _de = None
@@ -32,11 +32,10 @@ _speed0 = None
 
 
 def _prof_module():
-    """教授模組只載入/修補一次 (import 有快取, 重複 patch_debounce 會一層層包起來)。"""
+    """教授模組只載入一次。"""
     global _de, _speed0
     if _de is None:
         _de = load_prof_module(Path(DEFAULT_PROF_REPO))
-        patch_debounce(_de)
         _speed0 = (_de.MIN_Y_SPEED, _de.MIN_X_SPEED)
     # analyze_frames 會依桌面大小改速度門檻; 每次都從教授原值開始
     _de.MIN_Y_SPEED, _de.MIN_X_SPEED = _speed0
