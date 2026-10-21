@@ -313,13 +313,28 @@ def apply_edge_buffer(events: list[dict], buf: float = EDGE_BUFFER_CM) -> int:
     return n
 
 
-def zone_of_cm(tx: float, ty: float) -> str:
-    """與教授 zone_of 相同的分區 (半場 L/R + 3x3), 輸入須在桌面內。"""
+# 分區編號與半自動記錄工具 (教授 repo 的 analyze (8).py, zone_of) 相同 (2026-10-21 使用者決定統一)。
+# [col][row]: col = 沿桌長從左端線起的 3 段 (右半場從網子起), row = 沿桌寬從「遠端」起的 3 段。
+# 各半場離網近→遠為 1-3 / 4-6 / 7-9, 兩個半場 180° 旋轉對稱:
+#            左半場      網      右半場
+#     遠端  9  6  3      |      1  4  7
+#     中間  8  5  2      |      2  5  8
+#     近端  7  4  1      |      3  6  9
+ZONE_LABELS_L = [[9, 8, 7], [6, 5, 4], [3, 2, 1]]
+ZONE_LABELS_R = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+
+
+def zone_of_cm(tx: float, ty: float) -> str | None:
+    """桌面座標 (cm, 教授座標: x 從左端線, y 從近端) → "L1"~"R9"; 桌外回 None。
+    字首 L/R 是半場 (規則與 regression 用來判斷哪一側), 數字是記錄工具的編號。"""
+    if not (0 <= tx <= TABLE_W_CM and 0 <= ty <= TABLE_H_CM):
+        return None
     half = "L" if tx < TABLE_W_CM / 2 else "R"
     hx = tx if half == "L" else tx - TABLE_W_CM / 2
     col = min(int(hx / (TABLE_W_CM / 2 / 3)), 2)
-    row = min(int(ty / (TABLE_H_CM / 3)), 2)
-    return f"{half}{row * 3 + col + 1}"
+    row_far = min(int((TABLE_H_CM - ty) / (TABLE_H_CM / 3)), 2)
+    labels = ZONE_LABELS_L if half == "L" else ZONE_LABELS_R
+    return f"{half}{labels[col][row_far]}"
 
 
 DRIBBLE_MAX_DT = 0.6      # s
@@ -783,7 +798,7 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
         tx, ty = de.map_point(H, ev["x"], ev["y"])
         ev["table"] = [round(tx, 1), round(ty, 1)]
         if ev.get("type") == "bounce":
-            ev["zone"] = de.zone_of(tx, ty)
+            ev["zone"] = zone_of_cm(tx, ty)     # 記錄工具的編號 (不用教授 zone_of 的閱讀順序)
             n_mapped += 1
             if "xy_prof" in ev:   # 供對照: 教授的觸桌點估計映射到哪
                 px, py = de.map_point(H, ev["xy_prof"][0], ev["xy_prof"][1])
