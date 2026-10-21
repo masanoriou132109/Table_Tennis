@@ -180,65 +180,6 @@ def refine_touch_points(events: list[dict]) -> int:
     return n
 
 
-KINK_N = 3             # 折角前後各用幾個點估 y 速度
-KINK_MAX_GAP_F = 3     # 這些點之間最多相隔幾幀
-KINK_DV_FRAC = 2.2     # y 速度往上突變 >= 此倍數 x 桌面畫面高度 (每秒) 才算 (London 桌高 112px → 250px/s)
-KINK_EXCLUDE_S = 0.1   # 離擊球或既有落點這麼近的折角不算 (擊球本身也是折角)
-KINK_MIN_STEP = 2.0    # px; 每一步都要移動超過這麼多 (排除拿在手上/拋球、在兩個固定位置跳動的雜訊)
-
-
-def detect_kink_bounces(track: list[dict], events: list[dict], table_px_h: float) -> int:
-    """補抓「沒有 y 最低點」的落點: 球往遠端飛時, 下落被往遠端的移動抵消, y 速度一直 <= 0,
-    教授的「y 速度由正轉負」抓不到 (London 0:17.02、Lin vs Moregard 2:31.61)。
-
-    反彈一定讓畫面上的 y 速度突然往上改變, 不管球往哪個方向飛。London 統計:
-    已偵測落點的變化 -773 ~ -119 px/s (56 個中 54 個 <= -220), 飛行段 p5 = -44。
-    門檻依桌面在畫面中的高度縮放 (同 MIN_Y_SPEED)。只補「教授沒抓到的」, 既有落點不動。
-    新落點標 ev["kink"]=True, 觸桌點交給 refine_touch_points。回傳新增數量。
-    """
-    k = KINK_N
-    thr = -KINK_DV_FRAC * table_px_h
-    busy = [e["t"] for e in events if e.get("type") in ("hit", "net", "bounce")]
-
-    def vel(seg):
-        return np.polyfit([p["t"] for p in seg], [p["y"] for p in seg], 1)[0]
-
-    cands = []   # (i, dv)
-    for i in range(k - 1, len(track) - k + 1):
-        seg = track[i - k + 1:i + k]
-        steps = list(zip(seg[:-1], seg[1:]))
-        if any(q["frame"] - p["frame"] > KINK_MAX_GAP_F for p, q in steps):
-            continue
-        if any(np.hypot(q["x"] - p["x"], q["y"] - p["y"]) <= KINK_MIN_STEP for p, q in steps):
-            continue
-        if any(abs(track[i]["t"] - t) <= KINK_EXCLUDE_S for t in busy):
-            continue
-        dv = vel(track[i:i + k]) - vel(track[i - k + 1:i + 1])
-        if dv <= thr:
-            cands.append((i, dv))
-
-    # 相鄰幾點都過門檻時 (同一個折角) 取變化最大的
-    picked: list[tuple[int, float]] = []
-    for i, dv in cands:
-        if picked and track[i]["t"] - track[picked[-1][0]]["t"] <= KINK_EXCLUDE_S:
-            if dv < picked[-1][1]:
-                picked[-1] = (i, dv)
-            continue
-        picked.append((i, dv))
-
-    for i, dv in picked:
-        p = track[i]
-        leg1, leg2 = track[max(0, i - TOUCH_SIDE_N):i + 1], track[i:i + TOUCH_SIDE_N + 1]
-        dbg = lambda seg: [{"t": q["t"], "frame": q["frame"], "x": q["x"], "y": q["y"]} for q in seg]
-        events.append({"type": "bounce", "t": p["t"], "frame": p["frame"], "x": p["x"], "y": p["y"],
-                       "method": "kink", "leg_sizes": [len(leg1), len(leg2)], "fit_gap_px": None,
-                       "kink": True, "kink_dv": round(float(dv), 1),
-                       "debug": {"leg1_points": dbg(leg1), "leg2_points": dbg(leg2),
-                                 "fit1": None, "fit2": None}})
-    events.sort(key=lambda e: e["t"])
-    return len(picked)
-
-
 EDGE_BUFFER_CM = 5.0   # 超出桌邊 <= 此距離的落點仍算桌上 (擦邊球)
 
 
@@ -724,9 +665,10 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
 
     # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError。
     # h_at: 逐幀 H, 讓他判斷網邊的 x 反轉是碰網 ("net") 而非擊球
-    events = [] if not track else de.detect_events(track, None, h_at=nearest_H, table_px_h=table_px_h)[0]
-    n_kink = (0 if args.no_kink or table_px_h is None
-              else detect_kink_bounces(track, events, table_px_h))
+    # kink: 他也補抓沒有 y 最低點的落點 (球往遠端飛, y 速度一直 <= 0 但觸桌時突然往上變)
+    events = [] if not track else de.detect_events(track, None, h_at=nearest_H, table_px_h=table_px_h,
+                                                   kink=not args.no_kink)[0]
+    n_kink = sum(1 for e in events if e.get("kink"))
     n_touch = 0 if args.no_touch_refine else refine_touch_points(events)
 
     n_mapped = 0
