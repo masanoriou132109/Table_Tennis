@@ -676,25 +676,30 @@ def load_or_run_detectors(args) -> dict:
 
 def analyze(raw: dict, args, de) -> tuple[dict, dict]:
     """第二階段 (快): 桌面追蹤 → 球偵測過濾 → 事件 → 落點規則。回傳 (輸出 JSON, 統計)。"""
-    fps = raw["fps"]
-    w, h = PROC_W, PROC_H
-    tracker = TableTracker(w, h)
-
+    tracker = TableTracker(PROC_W, PROC_H)
+    quad_by_frame: dict[int, np.ndarray] = {}
     frames: list[dict] = []
-    H_by_frame: dict[int, np.ndarray] = {}
-    quads_px: list[np.ndarray] = []   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
-    n_table = 0
-    quad_by_frame: dict[int, np.ndarray] = {}   # 供裙板遮罩
     for k, fi in enumerate(raw["frame"].tolist()):
         quad = tracker.update(raw["coords"][k], raw["scores"][k], float(raw["presence"][k]))
         if quad is not None:
-            # 我們的 [FL,FR,NR,NL] → 他的 [NL,NR,FR,FL] (互為反序)
-            H_by_frame[fi] = de.build_homography(quad[::-1].astype(np.float32))
-            quads_px.append(quad)
             quad_by_frame[fi] = quad
-            n_table += 1
         # dets 會被下面的遮罩/閘門改寫, 複製一份以免動到快取內容
-        frames.append({"t": fi / fps, "frame": fi, "dets": [dict(d) for d in raw["dets"][k]]})
+        frames.append({"t": fi / raw["fps"], "frame": fi, "dets": [dict(d) for d in raw["dets"][k]]})
+    return analyze_frames(frames, quad_by_frame, raw["fps"], raw["src_size"], args, de)
+
+
+def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size,
+                   args, de) -> tuple[dict, dict]:
+    """桌面框已經追蹤好時的第二階段 (供 analyze, 以及已自己跑過 TableTracker 的程式呼叫)。
+
+    frames: [{"t", "frame", "dets": [{"x","y","conf"}]}] (1280x720 處理座標, 會被改寫)
+    quad_by_frame: 幀 → TableTracker 輸出的四邊形 [FL,FR,NR,NL] (處理座標); 沒框的幀不放
+    """
+    # 我們的 [FL,FR,NR,NL] → 他的 [NL,NR,FR,FL] (互為反序)
+    H_by_frame = {fi: de.build_homography(np.asarray(q)[::-1].astype(np.float32))
+                  for fi, q in quad_by_frame.items()}
+    quads_px = [np.asarray(q) for q in quad_by_frame.values()]   # 供 MIN_Y_SPEED 依桌面畫面大小縮放
+    n_table = len(quad_by_frame)
 
     # 球桌前裙板遮罩。全部幀處理完再做, 才能往前「和往後」找最近的桌面框:
     # 追蹤器要連續幾幀一致才確認桌面, 確認前那幾幀 (常是發球前) 沒有框, 只往前找會漏。
@@ -790,7 +795,7 @@ def analyze(raw: dict, args, de) -> tuple[dict, dict]:
     n_uncounted = classify_bounces(events)
 
     result = {"video": args.video, "start": args.start, "dur": args.dur, "fps": fps,
-              "src_size": raw["src_size"], "proc_size": [PROC_W, PROC_H],
+              "src_size": src_size, "proc_size": [PROC_W, PROC_H],
               "zone_expand": expand, "conf": args.conf,
               "frames_with_table": n_table, "frames_total": len(frames),
               "frames_with_ball_det": sum(1 for f in frames if f["dets"]),
