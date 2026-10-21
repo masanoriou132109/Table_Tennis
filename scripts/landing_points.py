@@ -822,6 +822,28 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
     return result, stats
 
 
+def summarize_landings(result: dict) -> dict:
+    """簡化輸出: 只列算數的落點 (桌上且沒有 uncounted; 發球第 1/2 跳也列, 用 serve 標出)。"""
+    def mmss(t: float) -> str:
+        return f"{int(t // 60):02d}:{t % 60:05.2f}"
+
+    landings = []
+    for e in result["events"]:
+        if e.get("type") != "bounce" or not e.get("zone") or e.get("uncounted"):
+            continue
+        serve = e.get("serve") if e.get("serve") in (1, 2) else None
+        landings.append({"time": mmss(e["t"]), "t": round(e["t"], 2),
+                         "half": e["zone"][0], "zone": int(e["zone"][1:]),
+                         "serve": serve, "table_cm": e["table"]})
+    return {"video": Path(result["video"]).name, "start": result["start"], "dur": result["dur"],
+            "count": len(landings),
+            "notes": ("只列算數的落點; serve=1/2 為發球第 1/2 跳 (其餘為 null)。"
+                      "half=L/R 為畫面左/右半場; zone 為記錄工具的分區 1~9 (各半場離網近→遠 1-3/4-6/7-9, "
+                      "左半場網前近端=1, 右半場網前遠端=1)。"
+                      "table_cm=[x 從左端線, y 從近端邊線] (cm, 桌面 274x152.5)。"),
+            "landings": landings}
+
+
 def main() -> None:
     args = build_parser().parse_args()
     de = load_prof_module(Path(args.prof_repo))
@@ -835,6 +857,9 @@ def main() -> None:
         PROJECT_ROOT / "data" / f"landing_{Path(args.video).stem}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    summary = summarize_landings(result)
+    sum_path = out_path.with_name(out_path.stem + "_landings.json")
+    sum_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
     bounces = [e for e in events if e.get("type") == "bounce"]
     hits = [e for e in events if e.get("type") == "hit"]
@@ -858,6 +883,7 @@ def main() -> None:
               + (f"  [發球 {e['serve']}]" if e.get("serve") else "")
               + (f"  [不算: {e['uncounted']}]" if e.get("uncounted") else ""))
     print(f"\n輸出 {out_path}")
+    print(f"簡化輸出 (算數落點 {summary['count']} 個) {sum_path}")
 
 
 
