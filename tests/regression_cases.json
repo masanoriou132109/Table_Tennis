@@ -53,7 +53,11 @@
     {"clip": "london_0935", "t": 587.32, "expect": "bounce", "status": "known_issue", "source": "10-19 使用者: 掛網沒過後落在桌上 (是落點), MIN_X_SPEED 縮放後被判成碰網; 計數結果不受影響"},
     {"clip": "london_0935", "t": 587.64, "expect": "not_counted", "status": "pass", "source": "10-10 #1"},
     {"clip": "london_0935", "t": 607.28, "expect": "net", "status": "pass", "source": "10-10 #2 碰網 (原本被判成擊球); 10-19 碰網判斷移進教授 detect_events 後為 net 事件"},
-    {"clip": "london_0935", "t": 603.72, "tol": 0.2, "expect": "no_hit", "status": "known_issue", "source": "10-19 使用者: 非進行中, 側拍鏡頭的 logo/顏色被偵測成球 (本幀無桌面, 借用 0.5s 內的桌面)"},
+    {"clip": "london_0935", "t": 603.72, "tol": 0.2, "expect": "no_hit", "status": "known_issue", "source": "10-19 使用者: 非進行中, 側拍鏡頭的 logo/顏色被偵測成球 (本幀無桌面, 借用 0.5s 內的桌面); 10-22 側拍不借桌面框後只剩切回主鏡頭時的 603.88"},
+    {"clip": "london_0935", "t": 603.56, "tol": 0.03, "expect": "no_hit", "status": "pass", "source": "10-22 側拍鏡頭雜訊; 側拍不借主鏡頭桌面框後消失"},
+    {"clip": "london_0935", "t": 603.70, "tol": 0.03, "expect": "no_bounce", "status": "pass", "source": "10-22 同上"},
+    {"clip": "london_0935", "t": 603.76, "tol": 0.03, "expect": "no_hit", "status": "pass", "source": "10-22 同上 (603.74 / 603.78)"},
+    {"clip": "london_0935", "t": 628.88, "expect": "no_hit", "status": "pass", "source": "10-22 使用者: 完全不是主鏡頭, 雜訊"},
     {"clip": "london_0935", "t": 607.90, "expect": "not_counted", "status": "pass", "source": "10-10 #2 掛網後落在擊球方"},
     {"clip": "london_0935", "t": 608.98, "expect": "not_counted", "status": "pass", "source": "10-10 #2 球員拍球"},
     {"clip": "london_0935", "t": 623.68, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 10:23 serve 1 是對的"},
@@ -64,6 +68,8 @@
     {"clip": "london_1745", "t": 1080.28, "expect": "not_counted", "status": "pass", "source": "10-10 球打在網子上彈起"},
     {"clip": "london_1745", "t": 1080.54, "expect": "counted", "side": "L", "status": "pass", "source": "10-10 觸網過網後真正的第一跳"},
     {"clip": "london_1745", "t": 1081.00, "t_end": 1082.30, "expect": "none_counted_in", "status": "pass", "source": "10-10 倒旋回到擊球方之後全部不算"},
+
+    {"clip": "london_1745", "t": 1094.86, "expect": "no_hit", "status": "pass", "source": "10-22 使用者: 完全不是主鏡頭, 雜訊"},
 
     {"clip": "london_2805", "t": 1700.72, "expect": "counted", "status": "pass", "source": "10-12 使用者: 擦邊的正確落點"},
     {"clip": "london_2805", "t": 1702.22, "expect": "not_counted", "status": "pass", "source": "10-12 使用者: 確實是碰網"},
@@ -90,6 +96,7 @@
     {"clip": "lin_0217", "t": 153.60, "expect": "not_counted", "status": "pass", "source": "10-12 不該算; 10-18 基準為 second_bounce (因 153.27 被誤算才判對), 使用者決定列為一般案例"},
 
     {"clip": "webm_0000", "t": 97.32, "expect": "not_counted", "status": "pass", "source": "10-04 使用者: 掛網沒過, 落在擊球方網邊"},
+    {"clip": "webm_0000", "t": 74.94, "expect": "no_hit", "status": "pass", "source": "10-22 使用者: 主鏡頭, 不是發球擊球 (發球被球員擋住), 是軌跡上的假擊球"},
     {"clip": "webm_0000", "t": 97.30, "expect": "net", "status": "pass", "source": "10-19 使用者: 撞網後馬上彈到桌面, 記成 HIT NET (碰網) 正確"},
     {"clip": "webm_0000", "t": 97.72, "expect": "not_counted", "status": "pass", "source": "10-04"},
     {"clip": "webm_0000", "t": 98.10, "expect": "not_counted", "status": "pass", "source": "10-04"}

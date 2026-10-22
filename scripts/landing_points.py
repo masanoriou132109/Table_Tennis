@@ -428,6 +428,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="停用球桌前裙板遮罩 (供對照)")
     ap.add_argument("--no-touch-refine", action="store_true",
                     help="停用觸桌點重估, 保留教授的 y(x) 拋物線交點 (供對照)")
+    ap.add_argument("--borrow-table", choices=("presence", "any", "none"), default="presence",
+                    help="本幀沒有桌面框時, 可否借用 0.5s 內最近的桌面框來過濾球偵測。"
+                         "presence (預設): 只有模型認為畫面裡有桌子 (presence >= 0.5) 才借 — 回合中桌面框"
+                         "短暫中斷時保留真球, 側拍/特寫鏡頭的雜訊不會借到相鄰主鏡頭的桌面框而通過。"
+                         "any: 都借 (舊行為); none: 都不借 (會丟掉回合中斷框時的真球, London 0:15.32 發球因此消失)")
     ap.add_argument("--no-kink", action="store_true",
                     help="停用折角落點補抓 (y 速度突然往上改變, 但沒有由正轉負)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -513,7 +518,8 @@ def analyze(raw: dict, args, de) -> tuple[dict, dict]:
         if quad is not None:
             quad_by_frame[fi] = quad
         # dets 會被下面的遮罩/閘門改寫, 複製一份以免動到快取內容
-        frames.append({"t": fi / raw["fps"], "frame": fi, "dets": [dict(d) for d in raw["dets"][k]]})
+        frames.append({"t": fi / raw["fps"], "frame": fi, "dets": [dict(d) for d in raw["dets"][k]],
+                       "presence": float(raw["presence"][k])})
     return analyze_frames(frames, quad_by_frame, raw["fps"], raw["src_size"], args, de)
 
 
@@ -559,7 +565,11 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
 
     for fr in frames:
         H = H_by_frame.get(fr["frame"])
-        if H is None:
+        # 側拍/特寫鏡頭 (模型認為沒有桌子) 不借相鄰主鏡頭的桌面框: London 10:03 側拍的 logo 曾因此
+        # 通過閘門, 產生 4 個擊球 + 1 個落點。沒有 presence 的呼叫端 (例如 landing_bridge) 照舊借。
+        borrow = (args.borrow_table == "any" or
+                  (args.borrow_table == "presence" and fr.get("presence", 1.0) >= 0.5))
+        if H is None and borrow:
             H = H_near(fr["frame"])
         if H is None:
             # 無任何可用桌面資訊 → 無法驗證球位置,且該處落點也無法映射,直接丟棄
