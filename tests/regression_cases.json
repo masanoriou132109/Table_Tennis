@@ -66,6 +66,7 @@
     {"clip": "london_0935", "t": 607.90, "expect": "not_counted", "status": "pass", "source": "10-10 #2 掛網後落在擊球方"},
     {"clip": "london_0935", "t": 608.98, "expect": "not_counted", "status": "pass", "source": "10-10 #2 球員拍球"},
     {"clip": "london_0935", "t": 623.68, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 10:23 serve 1 是對的"},
+    {"clip": "london_0935", "t": 624.50, "expect": "bounce", "status": "pass", "source": "10-22 使用者: 是落點 (擊球前 0.06s 的折角, 與 10:04.72 同類)"},
     {"clip": "london_0935", "t": 625.14, "expect": "not_counted", "status": "pass", "source": "10-10 #3 掛網落在擊球方"},
 
     {"clip": "london_1745", "t": 1079.54, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 沒 demo, 當成對的"},
