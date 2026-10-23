@@ -35,15 +35,13 @@ from src.tracker import TableTracker  # noqa: E402
 from src.video_io import (OUT_H, OUT_W, PROC_H, PROC_W, UI, check_aspect,  # noqa: E402
                           fs, lw, pt, s, to_out, to_proc)
 from scripts.infer_video import load_table_model, predict  # noqa: E402
-from scripts.landing_points import (DRIBBLE_MAX_DIST, DRIBBLE_MAX_DT,  # noqa: E402
-                                    DRIBBLE_NET_TOL, TABLE_W_CM, apply_edge_buffer,
-                                    classify_bounces,
-                                    mark_net_dribbles, mark_serves)
+from scripts.landing_points import (TABLE_W_CM, apply_edge_buffer,  # noqa: E402
+                                    classify_bounces, mark_serves)
 
 DRIBBLE_COLOR = (255, 0, 255)      # 不算的落點: 洋紅 (不計入落點)
 # classify_bounces 的原因 → 畫面標籤
 UNCOUNTED_TAG = {"own_side": "OWN SIDE", "second_bounce": "2ND BOUNCE", "net_edge": "NET EDGE",
-                 "dead_ball": "DEAD BALL", "net_dribble": "NET DRIBBLE"}
+                 "dead_ball": "DEAD BALL"}
 
 # 以下 UI 尺寸以 720p 設計, 繪製時經 s()/fs()/lw() 放大到 1080p 輸出
 TABLE_W, TABLE_H = 274.0, 152.5   # ITTF 正規球桌 (cm),物理等比
@@ -168,12 +166,6 @@ def main() -> None:
                     help="小視窗位置: br=右下 tr=右上 bl=左下 tl=左上")
     ap.add_argument("--edge-alpha", type=float, default=0.3,
                     help="edge 精修結果的 EMA 係數 (與出貨用的 infer_video 一致)")
-    ap.add_argument("--dribble-max-dt", type=float, default=DRIBBLE_MAX_DT,
-                    help="觸網連續彈跳: 與前一落點的最大時間差 (s)")
-    ap.add_argument("--dribble-max-dist", type=float, default=DRIBBLE_MAX_DIST,
-                    help="觸網連續彈跳: 與前一落點的最大桌面距離 (cm)")
-    ap.add_argument("--dribble-net-tol", type=float, default=DRIBBLE_NET_TOL,
-                    help="觸網連續彈跳: 前一跳離網子 <= 此距離 (cm) 時不檢查同側")
     ap.add_argument("--clip", type=float, nargs=2, metavar=("START", "END"), default=None,
                     help="只輸出這段 (秒)。前 5 秒先跑追蹤暖機但不輸出; 小視窗只顯示片段內的落點")
     ap.add_argument("--out", default=None)
@@ -183,10 +175,6 @@ def main() -> None:
     data = json.loads(Path(args.json_path).read_text())
     # 渲染時重新判定 (舊 JSON 也適用, 調門檻不必重跑球偵測)
     apply_edge_buffer(data["events"])
-    n_dribble = mark_net_dribbles(data["events"], args.dribble_max_dt, args.dribble_max_dist,
-                                  args.dribble_net_tol)
-    print(f"觸網連續彈跳: {n_dribble} 個 "
-          f"(Δt<={args.dribble_max_dt}s, Δd<={args.dribble_max_dist}cm, 同側或前跳離網<={args.dribble_net_tol}cm, 中間無擊球)")
     n_serve = mark_serves(data["events"])
     print(f"發球: 兩跳都抓到 {n_serve[1]} 次, 只抓到一跳/無法確定 {n_serve['?']} 次")
     n_unc = classify_bounces(data["events"])
