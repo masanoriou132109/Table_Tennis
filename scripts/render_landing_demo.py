@@ -168,6 +168,7 @@ def main() -> None:
                     help="edge 精修結果的 EMA 係數 (與出貨用的 infer_video 一致)")
     ap.add_argument("--clip", type=float, nargs=2, metavar=("START", "END"), default=None,
                     help="只輸出這段 (秒)。前 5 秒先跑追蹤暖機但不輸出; 小視窗只顯示片段內的落點")
+    ap.add_argument("--title", default=None, help="畫面上方中央的標題 (例如對比用的 BEFORE / AFTER)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     parts = {p.strip() for p in args.parts.split(",") if p.strip()}
@@ -303,6 +304,11 @@ def main() -> None:
             x, y = e["x"], e["y"]
             cv2.drawMarker(canvas, pt(x, y), HIT_COLOR, cv2.MARKER_DIAMOND, s(26), lw(3), cv2.LINE_AA)
             cv2.putText(canvas, tag, pt(x + 18, y + 26), FONT, fs(0.55), HIT_COLOR, lw(2), cv2.LINE_AA)
+
+        if args.title:
+            (tw, _), _ = cv2.getTextSize(args.title, FONT, fs(1.1), lw(3))
+            cv2.putText(canvas, args.title, (OUT_W // 2 - tw // 2, s(55)), FONT, fs(1.1),
+                        (255, 255, 255), lw(3), cv2.LINE_AA)
 
         if "strip" in parts:
             strip_right = origin[0] - 20 if args.map_pos in ("br", "bl") else w - 20
