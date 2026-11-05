@@ -48,3 +48,6 @@ external/
 data/cache/
 # regression.py --save-dir 的輸出 (可重建)
 data/regression/
+# v3 標註池 (影格由影片抽出; 標完轉成 data/annotations 才進 git)
+data/frames_v3/
+data/labelme_v3/
