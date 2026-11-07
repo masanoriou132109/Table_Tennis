@@ -1,0 +1,35 @@
+{
+  "image": "v3_1080p20260508ITTFWorlds_f030986.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      469.2,
+      289.2
+    ],
+    "far_right": [
+      848.2,
+      289.0
+    ],
+    "near_right": [
+      888.6,
+      408.1
+    ],
+    "near_left": [
+      434.4,
+      406.6
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

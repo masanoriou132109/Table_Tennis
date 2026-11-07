@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """場地感知的 train/val 切分。
 
-涵蓋 6 個場地 (由檔名前綴判斷)。每個場地內按影格序號排序,取後 --val-frac
+涵蓋 6 個場地 + v3 的 3 部影片 (由檔名前綴判斷)。每個場地內按影格序號排序,取後 --val-frac
 當 val (場地內時序隔離,避免相鄰影格洩漏;所有場地都出現在 train)。
 輸出 train.txt / val.txt,含正樣本 (有標註) 與負樣本 (無桌面特寫)。
 
@@ -30,6 +30,10 @@ VENUE_RULES = [
     ("20250523World", "Doha"),
     ("20250712USA", "Vegas"),
     ("Incheon", "Incheon"),
+    # v3 (2026-11): 回合中角被球員擋住的主鏡頭影格, 每部影片一組 (各自時序隔離, 不影響 v2 的切分)
+    ("v3_1440pFULL", "London_v3"),
+    ("v3_1080p20260508", "LinMoregard_v3"),
+    ("v3_2025WTTInche", "Incheon25_v3"),
 ]
 
 

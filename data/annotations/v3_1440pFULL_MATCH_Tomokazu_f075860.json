@@ -1,0 +1,35 @@
+{
+  "image": "v3_1440pFULL_MATCH_Tomokazu_f075860.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      478.4,
+      292.6
+    ],
+    "far_right": [
+      834.4,
+      294.6
+    ],
+    "near_right": [
+      867.9,
+      408.7
+    ],
+    "near_left": [
+      441.3,
+      404.8
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "image": "v3_2025WTTInche_Lee_Sang_Su_f046982.jpg",
+  "image_width": 1280,
+  "image_height": 720,
+  "corner_order": [
+    "far_left",
+    "far_right",
+    "near_right",
+    "near_left"
+  ],
+  "corners": {
+    "far_left": [
+      467.4,
+      337.5
+    ],
+    "far_right": [
+      781.3,
+      337.8
+    ],
+    "near_right": [
+      801.3,
+      430.1
+    ],
+    "near_left": [
+      444.8,
+      429.6
+    ]
+  },
+  "visibility": {
+    "far_left": true,
+    "far_right": true,
+    "near_right": true,
+    "near_left": true
+  }
+}
