@@ -47,6 +47,7 @@ DEFAULT_PROF_REPO = (PROJECT_ROOT.parent
 # 舊的 YOLO26 仍可用 --ball-model <教授 repo>/Models/BallDetector.mlpackage 指定。
 DEFAULT_BALL_MODEL = PROJECT_ROOT / "Models" / "BallDetector_rfdetr_20260930.mlpackage"
 
+from src.offline_smooth import smooth_quads  # noqa: E402
 from src.tracker import TableTracker  # noqa: E402
 from src.video_io import PROC_H, PROC_W, check_aspect, to_proc  # noqa: E402
 from scripts.infer_video import load_table_model, predict  # noqa: E402
@@ -362,6 +363,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "presence (預設): 只有模型認為畫面裡有桌子 (presence >= 0.5) 才借 — 回合中桌面框"
                          "短暫中斷時保留真球, 側拍/特寫鏡頭的雜訊不會借到相鄰主鏡頭的桌面框而通過。"
                          "any: 都借 (舊行為); none: 都不借 (會丟掉回合中斷框時的真球, London 0:15.32 發球因此消失)")
+    ap.add_argument("--no-offline-smooth", action="store_true",
+                    help="停用離線前後平滑, 只用 TableTracker 的逐幀輸出 (供對照)")
     ap.add_argument("--no-kink", action="store_true",
                     help="停用折角落點補抓 (y 速度突然往上改變, 但沒有由正轉負)")
     ap.add_argument("--out", default=None, help="輸出 JSON (預設 data/landing_<影片名>.json)")
@@ -376,8 +379,10 @@ CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 def cache_path(args) -> Path:
     """第一階段快取檔名: 影片 + 片段 + 球偵測門檻 + 模型。換任何一個都會重跑。"""
     ball = Path(args.ball_model).stem if args.ball_model else DEFAULT_BALL_MODEL.stem
+    # torch 後端直接用 --ckpt 的權重 → 權重檔名也進快取名; coreml 用固定的 mlpackage (換模型要 --refresh-cache)
+    table = args.table_backend if args.table_backend == "coreml" else f"torch-{Path(args.ckpt).stem}"
     return CACHE_DIR / (f"{Path(args.video).stem}_s{args.start:g}_d{args.dur:g}"
-                        f"_c{args.conf:g}_{ball}_{args.table_backend}.npz")
+                        f"_c{args.conf:g}_{ball}_{table}.npz")
 
 
 def run_detectors(args) -> dict:
@@ -449,7 +454,14 @@ def analyze(raw: dict, args, de) -> tuple[dict, dict]:
         # dets 會被下面的遮罩/閘門改寫, 複製一份以免動到快取內容
         frames.append({"t": fi / raw["fps"], "frame": fi, "dets": [dict(d) for d in raw["dets"][k]],
                        "presence": float(raw["presence"][k])})
-    return analyze_frames(frames, quad_by_frame, raw["fps"], raw["src_size"], args, de)
+    if not args.no_offline_smooth:
+        # 錄好的影片可以前後看: 被擋/被誤認的角用前後可信的觀測補 (見 src/offline_smooth.py)
+        quad_by_frame = smooth_quads(raw["frame"].tolist(), raw["coords"], raw["scores"],
+                                     quad_by_frame, raw["fps"])
+    result, stats = analyze_frames(frames, quad_by_frame, raw["fps"], raw["src_size"], args, de)
+    # 畫 demo 用同一組桌面框 (不再逐幀重跑模型 + 精修, 與落點分析一致)
+    result["table_quads"] = {str(fi): np.round(q, 2).tolist() for fi, q in quad_by_frame.items()}
+    return result, stats
 
 
 def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size,

@@ -200,8 +200,14 @@ def main() -> None:
     # 球軌跡: 實際餵給落點演算法的點 (JSON 內已有,不需重跑球偵測)
     track_by_frame = {p["frame"]: p for p in data.get("track", [])}
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    model = load_table_model(args.ckpt, device, args.table_backend)
+    # 新版 JSON 帶有落點分析用的桌面框 (離線前後平滑過): 直接畫, 與分析一致, 也不必重跑模型
+    table_quads = {int(k): np.asarray(v) for k, v in data.get("table_quads", {}).items()}
+    if table_quads:
+        print(f"桌面框: 用 JSON 內的 table_quads ({len(table_quads)} 幀)")
+    else:
+        print("桌面框: JSON 沒有 table_quads (舊版), 逐幀重跑模型 + 追蹤器 + edge 精修")
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        model = load_table_model(args.ckpt, device, args.table_backend)
 
     cap = cv2.VideoCapture(video)
     check_aspect(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -235,11 +241,11 @@ def main() -> None:
         frame = to_proc(raw)
         canvas = to_out(raw) if now >= write_from else None   # 暖機期不需要畫
 
-        coords, scores, presence = predict(model, frame, device, w, h)
-        quad = tracker.update(coords, scores, presence)
-        # 桌面框走與出貨相同的管線: 追蹤器 → edge 精修 → EMA。只畫矩形框,
-        # 不畫角點或信心 (此 demo 的重點是落點, 桌面只是參考框)。
-        if quad is None:
+        # 只畫矩形框, 不畫角點或信心 (此 demo 的重點是落點, 桌面只是參考框)
+        if table_quads:
+            edge_state = table_quads.get(fi)
+        elif (quad := tracker.update(*predict(model, frame, device, w, h))) is None:
+            # 舊版 JSON: 追蹤器 → edge 精修 → EMA
             edge_state = None
         else:
             refined, _, _ = refine_quad(frame, quad, tracker.smoother.confident,
