@@ -100,6 +100,7 @@ def main() -> None:
     ap.add_argument("--clip", action="append", help="只跑這些片段 (可重複)")
     ap.add_argument("--refresh-cache", action="store_true", help="重跑第一階段 (球/桌面偵測)")
     ap.add_argument("--save-dir", default=None, help="把各片段的落點 JSON 寫到這裡 (供 render_landing_demo.py)")
+    ap.add_argument("--ckpt", default=None, help="桌面模型改用這個 PyTorch 權重 (預設 Core ML); 比較新舊模型用")
     opts = ap.parse_args()
 
     spec = json.loads(CASES.read_text())
@@ -114,6 +115,8 @@ def main() -> None:
         argv = [str(PROJECT_ROOT / c["video"]), "--start", str(c["start"]), "--dur", str(c["dur"])]
         if opts.refresh_cache:
             argv.append("--refresh-cache")
+        if opts.ckpt:
+            argv += ["--table-backend", "torch", "--ckpt", opts.ckpt]
         args = parser.parse_args(argv)
         result, _ = analyze(load_or_run_detectors(args), args, de)
         if opts.save_dir:

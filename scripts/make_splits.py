@@ -34,6 +34,10 @@ VENUE_RULES = [
     ("v3_1440pFULL", "London_v3"),
     ("v3_1080p20260508", "LinMoregard_v3"),
     ("v3_2025WTTInche", "Incheon25_v3"),
+    # v4 (2026-11): 側拍/重播負樣本 (沒有標註 = presence 0), 使用者確認過不是主鏡頭
+    ("v4neg_1440pFULL", "London_v4neg"),
+    ("v4neg_1080p20260508", "LinMoregard_v4neg"),
+    ("v4neg_2025WTTInche", "Incheon25_v4neg"),
 ]
 
 
