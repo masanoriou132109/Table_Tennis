@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import sys
 from pathlib import Path
@@ -476,16 +477,26 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
                   for fi, q in quad_by_frame.items()}
     quads_px = [np.asarray(q) for q in quad_by_frame.values()]   # 供速度門檻依桌面畫面大小縮放
     n_table = len(quad_by_frame)
+    sorted_fis = sorted(quad_by_frame)
+
+    def nearest_fi(x: float) -> int:
+        """sorted_fis 中最接近 x 的幀 (距離相同取較早的); 二分搜尋, 整場影片 (十幾萬幀) 也快。"""
+        i = bisect.bisect_left(sorted_fis, x)
+        if i == 0:
+            return sorted_fis[0]
+        if i == len(sorted_fis):
+            return sorted_fis[-1]
+        a, b = sorted_fis[i - 1], sorted_fis[i]
+        return a if x - a <= b - x else b
 
     # 球桌前裙板遮罩。全部幀處理完再做, 才能往前「和往後」找最近的桌面框:
     # 追蹤器要連續幾幀一致才確認桌面, 確認前那幾幀 (常是發球前) 沒有框, 只往前找會漏。
     n_apron = 0
     if not args.no_apron_mask and quad_by_frame:
-        qfs = np.array(sorted(quad_by_frame))
         for fr in frames:
             if not fr["dets"]:
                 continue
-            k = int(qfs[np.argmin(np.abs(qfs - fr["frame"]))])
+            k = nearest_fi(fr["frame"])
             if abs(k - fr["frame"]) > 10:
                 continue
             kept = [d for d in fr["dets"]
@@ -495,13 +506,12 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
 
     # 逐幀桌面區域閘門 (取代他 build_track 內用固定 H 的那段)
     expand = args.zone_expand
-    sorted_fis = sorted(H_by_frame)
 
     def H_near(fi: int, max_dt: float = 0.5):
         """取最接近的可用 H (桌面偵測短暫中斷時仍能過濾);超出時間窗回 None。"""
         if not sorted_fis:
             return None
-        best = min(sorted_fis, key=lambda k: abs(k - fi))
+        best = nearest_fi(fi)
         return H_by_frame[best] if abs(best - fi) / fps <= max_dt else None
 
     for fr in frames:
@@ -534,7 +544,7 @@ def analyze_frames(frames: list[dict], quad_by_frame: dict, fps: float, src_size
     def nearest_H(t: float):
         if not H_by_frame:
             return None
-        fi = min(H_by_frame, key=lambda k: abs(k / fps - t))
+        fi = nearest_fi(t * fps)
         return H_by_frame[fi] if abs(fi / fps - t) <= 0.2 else None
 
     # 他的 detect_events/split_runs 假設 track 非空,空軌跡會 IndexError。

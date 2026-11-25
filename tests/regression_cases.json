@@ -72,7 +72,7 @@
     {"clip": "london_1745", "t": 1079.54, "expect": "serve1", "status": "pass", "source": "10-18 使用者: 沒 demo, 當成對的"},
     {"clip": "london_1745", "t": 1079.92, "expect": "serve2", "status": "pass", "source": "10-18 同上"},
     {"clip": "london_1745", "t": 1080.28, "expect": "not_counted", "status": "pass", "source": "10-10 球打在網子上彈起"},
-    {"clip": "london_1745", "t": 1080.54, "expect": "counted", "side": "L", "status": "pass", "source": "10-10 觸網過網後真正的第一跳"},
+    {"clip": "london_1745", "t": 1080.54, "expect": "counted", "side": "L", "status": "known_issue", "source": "10-10 觸網過網後真正的第一跳; 11-12 v3 桌面框較準 (使用者確認), 落點離網 10.8cm 進 net_edge 12cm 被判不算; 觸網過網又回旋到擊球方極少見, 使用者決定不改門檻"},
     {"clip": "london_1745", "t": 1081.00, "t_end": 1082.30, "expect": "none_counted_in", "status": "pass", "source": "10-10 倒旋回到擊球方之後全部不算"},
 
     {"clip": "london_1745", "t": 1094.86, "expect": "no_hit", "status": "pass", "source": "10-22 使用者: 完全不是主鏡頭, 雜訊"},
